@@ -12,6 +12,7 @@ import (
 	"github.com/zigamedved/cronsentry/internal/api"
 	"github.com/zigamedved/cronsentry/internal/db"
 	"github.com/zigamedved/cronsentry/internal/notifications"
+	"github.com/zigamedved/cronsentry/internal/notifications/integrations"
 )
 
 // TODO: create app struct with logger, database, email sender, notification processor
@@ -31,11 +32,10 @@ func main() {
 	}
 	logger.Println("Database initialized successfully")
 
-	emailSender := notifications.NewEmailSender(logger)
-
+	sendgridClient := integrations.NewSendgridSendClient("API_KEY")
 	notificationProcessor := notifications.NewNotificationProcessor(
 		database.GetDB(),
-		emailSender,
+		sendgridClient,
 		logger,
 	)
 	notificationProcessor.Start()

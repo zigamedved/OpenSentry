@@ -7,16 +7,14 @@ import (
 	"time"
 )
 
-// NotificationProcessor processes pending notifications
 type NotificationProcessor struct {
 	db          *sql.DB
-	emailSender *EmailSender
+	emailSender EmailSender // should be interface that has SendEmail method implemented
 	logger      *log.Logger
 	done        chan struct{}
 }
 
-// NewNotificationProcessor creates a new notification processor
-func NewNotificationProcessor(db *sql.DB, emailSender *EmailSender, logger *log.Logger) *NotificationProcessor {
+func NewNotificationProcessor(db *sql.DB, emailSender EmailSender, logger *log.Logger) *NotificationProcessor {
 	return &NotificationProcessor{
 		db:          db,
 		emailSender: emailSender,
@@ -25,7 +23,6 @@ func NewNotificationProcessor(db *sql.DB, emailSender *EmailSender, logger *log.
 	}
 }
 
-// Start begins processing notifications
 func (np *NotificationProcessor) Start() {
 	go func() {
 		ticker := time.NewTicker(30 * time.Second)
@@ -44,14 +41,11 @@ func (np *NotificationProcessor) Start() {
 	}()
 }
 
-// Stop stops the notification processor
 func (np *NotificationProcessor) Stop() {
 	close(np.done)
 }
 
-// processNotifications processes pending notifications
 func (np *NotificationProcessor) processNotifications() error {
-	// Get pending notifications
 	query := `
 		SELECT n.id, n.message, n.type, u.email, j.name
 		FROM notifications n
@@ -86,7 +80,6 @@ func (np *NotificationProcessor) processNotifications() error {
 			return fmt.Errorf("error scanning notification: %w", err)
 		}
 
-		// Process based on notification type
 		var processErr error
 		if notification.Type == "email" {
 			processErr = np.sendEmailNotification(notification.ID, notification.Email, notification.JobName, notification.Message)
@@ -107,7 +100,6 @@ func (np *NotificationProcessor) processNotifications() error {
 	return nil
 }
 
-// sendEmailNotification sends an email notification
 func (np *NotificationProcessor) sendEmailNotification(id, email, jobName, message string) error {
 	subject := fmt.Sprintf("CronSentry Alert: Job '%s'", jobName)
 	body := fmt.Sprintf(`
@@ -123,15 +115,13 @@ func (np *NotificationProcessor) sendEmailNotification(id, email, jobName, messa
 		</html>
 	`, message, jobName, time.Now().Format(time.RFC1123))
 
-	// Send email
-	if err := np.emailSender.Send(email, subject, body); err != nil {
+	if err := np.emailSender.SendEmail(email, subject, body); err != nil {
 		if err := np.markNotificationFailed(id, err.Error()); err != nil {
 			np.logger.Printf("Error marking notification as failed: %v", err)
 		}
 		return fmt.Errorf("error sending email: %w", err)
 	}
 
-	// Mark as sent
 	if err := np.markNotificationSent(id); err != nil {
 		return fmt.Errorf("error marking notification as sent: %w", err)
 	}
@@ -139,7 +129,6 @@ func (np *NotificationProcessor) sendEmailNotification(id, email, jobName, messa
 	return nil
 }
 
-// markNotificationSent marks a notification as sent
 func (np *NotificationProcessor) markNotificationSent(id string) error {
 	query := `
 		UPDATE notifications
@@ -155,7 +144,6 @@ func (np *NotificationProcessor) markNotificationSent(id string) error {
 	return nil
 }
 
-// markNotificationFailed marks a notification as failed
 func (np *NotificationProcessor) markNotificationFailed(id, reason string) error {
 	query := `
 		UPDATE notifications
