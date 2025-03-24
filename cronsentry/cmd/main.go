@@ -32,7 +32,7 @@ func main() {
 	}
 	logger.Println("Database initialized successfully")
 
-	sendgridClient := integrations.NewSendgridSendClient("API_KEY")
+	sendgridClient := integrations.NewSendgridSendClient("API_KEY", logger, false)
 	notificationProcessor := notifications.NewNotificationProcessor(
 		database.GetDB(),
 		sendgridClient,
