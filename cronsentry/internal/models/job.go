@@ -4,21 +4,15 @@ import (
 	"time"
 )
 
-// JobStatus represents the current status of a monitored job
 type JobStatus string
 
 const (
-	// StatusHealthy indicates the job is running as expected
 	StatusHealthy JobStatus = "healthy"
-	// StatusLate indicates the job is running but outside the expected window
-	StatusLate JobStatus = "late"
-	// StatusMissing indicates the job has missed its expected run time
+	StatusLate    JobStatus = "late"
 	StatusMissing JobStatus = "missing"
-	// StatusPaused indicates the job monitoring is paused
-	StatusPaused JobStatus = "paused"
+	StatusPaused  JobStatus = "paused"
 )
 
-// Job represents a monitored cron job
 type Job struct {
 	ID          string    `json:"id" db:"id"`
 	Name        string    `json:"name" db:"name"`
@@ -34,21 +28,27 @@ type Job struct {
 	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
 }
 
-// JobEvent represents a ping or an incident for a job
+type JobEventType string
+
+const (
+	TypePing     JobEventType = "ping"
+	TypeMiss     JobEventType = "miss"
+	TypeRecovery JobEventType = "recovery"
+)
+
 type JobEvent struct {
-	ID        string    `json:"id" db:"id"`
-	JobID     string    `json:"job_id" db:"job_id"`
-	Type      string    `json:"type" db:"type"` // "ping", "miss", "recovery"
-	Data      string    `json:"data" db:"data"` // Additional data as JSON string
-	CreatedAt time.Time `json:"created_at" db:"created_at"`
+	ID        string       `json:"id" db:"id"`
+	JobID     string       `json:"job_id" db:"job_id"`
+	Type      JobEventType `json:"type" db:"type"`
+	Data      string       `json:"data" db:"data"` // additional data as JSON string
+	CreatedAt time.Time    `json:"created_at" db:"created_at"`
 }
 
-// User represents a registered user of the system
 type User struct {
 	ID        string    `json:"id" db:"id"`
 	Email     string    `json:"email" db:"email"`
 	Name      string    `json:"name" db:"name"`
-	Password  string    `json:"-" db:"password_hash"` // Hashed, never returned in JSON
+	Password  string    `json:"-" db:"password_hash"` // never returned in JSON
 	CreatedAt time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
 }
