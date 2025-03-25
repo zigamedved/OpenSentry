@@ -1,6 +1,6 @@
 # CronSentry
 
-CronSentry is a lightweight, reliable monitoring service for your cron jobs and scheduled tasks. Get notified immediately when your scheduled jobs fail to run on time.
+CronSentry is a lightweight monitoring service for your cron jobs and scheduled tasks. Get notified immediately when your scheduled jobs fail to run on time.
 
 ## Features
 
@@ -25,7 +25,7 @@ CronSentry is a lightweight, reliable monitoring service for your cron jobs and 
 
 2. **Server-side Monitoring**:
    - When a ping is received, CronSentry updates the job's status to "healthy"
-   - A background service runs every minute to check for missing jobs
+   - A background service runs every 10 seconds to check for missing jobs
    - If a job misses its expected ping time, its status changes to "missing"
    - Missing jobs trigger notifications based on your settings
 
@@ -43,7 +43,7 @@ This design is lightweight and effective because it requires no agent installati
 
 1. Clone the repository:
    ```
-   git clone https://github.com/yourusername/cronsentry.git
+   git clone https://github.com/zigamedved/cronsentry.git
    cd cronsentry
    ```
 
@@ -58,12 +58,7 @@ This design is lightweight and effective because it requires no agent installati
 
 1. Add a ping to your cron job by adding this at the end of your command:
    ```
-   && curl -s http://your-cronsentry-host:8080/api/ping/YOUR_JOB_ID > /dev/null
-   ```
-
-2. Example crontab entry:
-   ```
-   0 * * * * /path/to/your/script.sh && curl -s http://localhost:8080/api/ping/abc123 > /dev/null
+   curl -s http://your-cronsentry-host:8080/api/ping/YOUR_JOB_ID > /dev/null
    ```
 
 ## API Usage
@@ -106,7 +101,7 @@ curl -X POST http://localhost:8080/api/ping/YOUR_JOB_ID
 
 1. Clone the repository:
    ```
-   git clone https://github.com/yourusername/cronsentry.git
+   git clone https://github.com/zigamedved/cronsentry.git
    cd cronsentry
    ```
 
