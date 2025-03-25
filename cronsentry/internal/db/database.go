@@ -64,7 +64,7 @@ func (d *Database) GetJob(id string) (*models.Job, error) {
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, nil // Job not found
+			return nil, nil
 		}
 		return nil, fmt.Errorf("error querying job: %w", err)
 	}

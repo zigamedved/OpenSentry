@@ -9,7 +9,7 @@ import (
 
 type NotificationProcessor struct {
 	db          *sql.DB
-	emailSender EmailSender // should be interface that has SendEmail method implemented
+	emailSender EmailSender
 	logger      *log.Logger
 	done        chan struct{}
 }
