@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/adhocore/gronx"
 	"github.com/google/uuid"
 	"github.com/zigamedved/cronsentry/internal/db"
 	"github.com/zigamedved/cronsentry/internal/models"
@@ -25,32 +26,46 @@ func NewServer(database *db.Database, logger *log.Logger) *Server {
 
 func (s *Server) Router() http.Handler {
 	mux := http.NewServeMux()
-
 	mux.HandleFunc("POST /api/jobs", s.handleCreateJob)
 	mux.HandleFunc("GET /api/jobs", s.handleListJobs)
 	mux.HandleFunc("GET /api/jobs/{id}", s.handleGetJob)
 	mux.HandleFunc("PUT /api/jobs/{id}", s.handleUpdateJob)
 	mux.HandleFunc("POST /api/ping/{id}", s.handlePing)
-
 	return s.loggingMiddleware(s.recoveryMiddleware(mux))
 }
 
+var jobRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Schedule    string `json:"schedule"`
+	Timezone    string `json:"timezone"`
+	GraceTime   int    `json:"grace_time"`
+}
+
 func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
-	var jobRequest struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		Schedule    string `json:"schedule"`
-		Timezone    string `json:"timezone"`
-		GraceTime   int    `json:"grace_time"`
-	}
 
 	if err := json.NewDecoder(r.Body).Decode(&jobRequest); err != nil {
+		s.logger.Println("Invalid request body")
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	if jobRequest.Name == "" || jobRequest.Schedule == "" {
+		s.logger.Println("Name and schedule are required")
 		http.Error(w, "Name and schedule are required", http.StatusBadRequest)
+		return
+	}
+
+	if !gronx.IsValid(jobRequest.Schedule) {
+		s.logger.Println("Invalid CRON schedule provided")
+		http.Error(w, "Invalid CRON schedule provided", http.StatusBadRequest)
+		return
+	}
+
+	nextTick, err := gronx.NextTick(jobRequest.Schedule, true)
+	if err != nil {
+		s.logger.Println("Error calculating next tick")
+		http.Error(w, "Error calculating next tick", http.StatusBadRequest)
 		return
 	}
 
@@ -63,8 +78,8 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 		GraceTime:   jobRequest.GraceTime,
 		Status:      models.StatusHealthy,
 		LastPing:    time.Now().UTC(),
-		NextExpect:  time.Now().UTC().Add(time.Hour), // Default 1 hour, should be calculated from schedule
-		UserID:      "test-user",                     // Hardcoded for now, should come from auth
+		NextExpect:  nextTick,
+		UserID:      "test-user", // hardcoded for now, should come from auth
 		CreatedAt:   time.Now().UTC(),
 		UpdatedAt:   time.Now().UTC(),
 	}
@@ -146,7 +161,6 @@ func (s *Server) handleUpdateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse request body
 	var jobRequest struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`

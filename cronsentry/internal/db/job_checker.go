@@ -25,7 +25,7 @@ func NewJobChecker(database *Database, logger *log.Logger) *JobChecker {
 
 func (jc *JobChecker) Start() {
 	go func() {
-		ticker := time.NewTicker(1 * time.Minute)
+		ticker := time.NewTicker(10 * time.Second)
 		defer ticker.Stop()
 
 		for {

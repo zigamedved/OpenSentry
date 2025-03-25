@@ -15,9 +15,6 @@ import (
 	"github.com/zigamedved/cronsentry/internal/notifications/integrations"
 )
 
-// TODO: create app struct with logger, database, email sender, notification processor
-// also add server to app struct and start method to server
-
 func main() {
 	logger := log.New(os.Stdout, "cronsentry: ", log.LstdFlags)
 
@@ -42,18 +39,16 @@ func main() {
 	logger.Println("Notification processor started")
 
 	server := api.NewServer(database, logger)
-
 	addr := ":8080"
 	if port := os.Getenv("PORT"); port != "" {
 		addr = ":" + port
 	}
-
 	srv := &http.Server{
 		Addr:         addr,
 		Handler:      server.Router(),
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 5 * time.Second,
+		IdleTimeout:  2 * time.Minute,
 	}
 
 	go func() {
