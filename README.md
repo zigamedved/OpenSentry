@@ -95,7 +95,7 @@ curl -X POST http://localhost:8080/api/ping/YOUR_JOB_ID
 
 1. Clone the repository:
    ```
-   git clone https://github.com/yourusername/cronsentry.git
+   git clone https://github.com/zigamedved/cronsentry.git
    cd cronsentry
    ```
 
@@ -121,7 +121,3 @@ curl -X POST http://localhost:8080/api/ping/YOUR_JOB_ID
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details. 
