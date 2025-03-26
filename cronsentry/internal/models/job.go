@@ -18,7 +18,6 @@ type Job struct {
 	Name        string    `json:"name" db:"name"`
 	Description string    `json:"description" db:"description"`
 	Schedule    string    `json:"schedule" db:"schedule"`
-	Timezone    string    `json:"timezone" db:"timezone"`
 	GraceTime   int       `json:"grace_time" db:"grace_time"` // minutes
 	LastPing    time.Time `json:"last_ping" db:"last_ping"`
 	NextExpect  time.Time `json:"next_expect" db:"next_expect"`

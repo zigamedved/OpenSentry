@@ -47,14 +47,14 @@ func (jc *JobChecker) Stop() {
 
 func (jc *JobChecker) checkJobs() error {
 	query := `
-		SELECT id, name, user_id, last_ping, next_expect
+		SELECT id, name, user_id, last_ping, next_expect, grace_time
 		FROM jobs
-		WHERE status != $1
-		AND next_expect < $2
+		WHERE status != $1 AND status != $2
+		AND next_expect < $3
 	`
 
 	now := time.Now().UTC()
-	rows, err := jc.db.db.Query(query, models.StatusPaused, now)
+	rows, err := jc.db.db.Query(query, models.StatusPaused, models.StatusMissing, now)
 	if err != nil {
 		return fmt.Errorf("error querying jobs: %w", err)
 	}
@@ -67,13 +67,14 @@ func (jc *JobChecker) checkJobs() error {
 			UserID     string
 			LastPing   time.Time
 			NextExpect time.Time
+			GraceTime  int
 		}
 
-		if err := rows.Scan(&job.ID, &job.Name, &job.UserID, &job.LastPing, &job.NextExpect); err != nil {
+		if err := rows.Scan(&job.ID, &job.Name, &job.UserID, &job.LastPing, &job.NextExpect, &job.GraceTime); err != nil {
 			return fmt.Errorf("error scanning job: %w", err)
 		}
 
-		if job.NextExpect.Before(now) {
+		if job.NextExpect.Add(time.Duration(time.Duration(job.GraceTime).Minutes())).Before(now) {
 			if err := jc.markJobMissing(job.ID, job.Name, job.UserID); err != nil {
 				jc.logger.Printf("Error marking job as missing: %v", err)
 			}
