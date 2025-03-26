@@ -8,8 +8,31 @@ CronSentry is a lightweight, reliable monitoring service for your cron jobs and 
 - **Flexible Alert Thresholds**: Set custom grace periods for each job
 - **Email Notifications**: Get notified when jobs fail to run
 - **Status Dashboard**: View the health of all your jobs in one place
-- **Timezone Support**: Set different timezones for each monitored job
 - **Extensible**: Easy to add Slack, Discord, or other notification methods
+
+### Ping System Architecture
+
+1. **User-side Integration**:
+   - Register a job in CronSentry to get a unique job ID
+   - Add a simple HTTP request to the end of your cron job command:
+     ```
+     * * * * * /path/to/your/script.sh && curl -s http://your-cronsentry-host:8080/api/ping/YOUR_JOB_ID > /dev/null
+     ```
+   - This curl command sends a "heartbeat" to CronSentry after your job completes successfully
+
+2. **Server-side Monitoring**:
+   - When a ping is received, CronSentry updates the job's status to "healthy"
+   - A background service runs every 10 seconds to check for missing jobs
+   - If a job misses its expected ping time, its status changes to "missing"
+   - Missing jobs trigger notifications based on your settings
+
+3. **Job Status Lifecycle**:
+   - **Healthy**: Job is running on schedule
+   - **Late**: Job pinged but outside grace period
+   - **Missing**: No ping received when expected
+   - **Paused**: Monitoring temporarily disabled
+
+This design is lightweight and effective because it requires no agent installation on your servers - just a simple curl command added to your existing cron jobs.
 
 ## Quick Start
 
@@ -51,7 +74,6 @@ curl -X POST http://localhost:8080/api/jobs \
     "name": "Database Backup",
     "description": "Daily database backup job",
     "schedule": "0 0 * * *",
-    "timezone": "UTC",
     "grace_time": 15
   }'
 ```
@@ -61,13 +83,6 @@ curl -X POST http://localhost:8080/api/jobs \
 ```bash
 curl -X POST http://localhost:8080/api/ping/YOUR_JOB_ID
 ```
-
-## Pricing Plans
-
-- **Free Tier**: Monitor up to 3 jobs, email notifications
-- **Personal Plan**: $9/month - Monitor up to 20 jobs, email notifications
-- **Team Plan**: $29/month - Monitor up to 100 jobs, email + Slack notifications
-- **Business Plan**: $99/month - Unlimited jobs, all notifications, priority support
 
 ## Development
 

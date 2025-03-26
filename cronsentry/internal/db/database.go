@@ -49,7 +49,7 @@ func (d *Database) Close() error {
 
 func (d *Database) GetJob(id string) (*models.Job, error) {
 	query := `
-		SELECT id, name, description, schedule, timezone, grace_time, 
+		SELECT id, name, description, schedule, grace_time, 
 		       last_ping, next_expect, status, user_id, created_at, updated_at
 		FROM jobs
 		WHERE id = $1
@@ -58,7 +58,7 @@ func (d *Database) GetJob(id string) (*models.Job, error) {
 	var job models.Job
 	err := d.db.QueryRow(query, id).Scan(
 		&job.ID, &job.Name, &job.Description, &job.Schedule,
-		&job.Timezone, &job.GraceTime, &job.LastPing, &job.NextExpect,
+		&job.GraceTime, &job.LastPing, &job.NextExpect,
 		&job.Status, &job.UserID, &job.CreatedAt, &job.UpdatedAt,
 	)
 
@@ -74,7 +74,7 @@ func (d *Database) GetJob(id string) (*models.Job, error) {
 
 func (d *Database) ListJobsByUser(userID string) ([]*models.Job, error) {
 	query := `
-		SELECT id, name, description, schedule, timezone, grace_time, 
+		SELECT id, name, description, schedule, grace_time, 
 		       last_ping, next_expect, status, user_id, created_at, updated_at
 		FROM jobs
 		WHERE user_id = $1
@@ -92,7 +92,7 @@ func (d *Database) ListJobsByUser(userID string) ([]*models.Job, error) {
 		var job models.Job
 		err := rows.Scan(
 			&job.ID, &job.Name, &job.Description, &job.Schedule,
-			&job.Timezone, &job.GraceTime, &job.LastPing, &job.NextExpect,
+			&job.GraceTime, &job.LastPing, &job.NextExpect,
 			&job.Status, &job.UserID, &job.CreatedAt, &job.UpdatedAt,
 		)
 		if err != nil {
@@ -118,14 +118,14 @@ func (d *Database) CreateJob(job *models.Job) error {
 	job.UpdatedAt = now
 
 	query := `
-		INSERT INTO jobs (id, name, description, schedule, timezone, grace_time, 
+		INSERT INTO jobs (id, name, description, schedule, grace_time, 
 		                 last_ping, next_expect, status, user_id, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	`
 
 	_, err := d.db.Exec(query,
 		job.ID, job.Name, job.Description, job.Schedule,
-		job.Timezone, job.GraceTime, job.LastPing, job.NextExpect,
+		job.GraceTime, job.LastPing, job.NextExpect,
 		job.Status, job.UserID, job.CreatedAt, job.UpdatedAt,
 	)
 	if err != nil {
@@ -140,13 +140,13 @@ func (d *Database) UpdateJob(job *models.Job) error {
 
 	query := `
 		UPDATE jobs
-		SET name = $1, description = $2, schedule = $3, timezone = $4, 
-		    grace_time = $5, last_ping = $6, next_expect = $7, status = $8, updated_at = $9
-		WHERE id = $10 AND user_id = $11
+		SET name = $1, description = $2, schedule = $3,
+		grace_time = $4, last_ping = $5, next_expect = $6, status = $7, updated_at = $8
+		WHERE id = $9 AND user_id = $10
 	`
 
 	result, err := d.db.Exec(query,
-		job.Name, job.Description, job.Schedule, job.Timezone,
+		job.Name, job.Description, job.Schedule,
 		job.GraceTime, job.LastPing, job.NextExpect, job.Status,
 		job.UpdatedAt, job.ID, job.UserID,
 	)

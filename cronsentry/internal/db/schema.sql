@@ -14,7 +14,6 @@ CREATE TABLE IF NOT EXISTS jobs (
     name VARCHAR(255) NOT NULL,
     description TEXT,
     schedule VARCHAR(255) NOT NULL,
-    timezone VARCHAR(100) DEFAULT 'UTC',
     grace_time INTEGER NOT NULL DEFAULT 10, -- Grace period in minutes
     last_ping TIMESTAMPTZ,
     next_expect TIMESTAMPTZ,

@@ -38,7 +38,6 @@ var jobRequest struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Schedule    string `json:"schedule"`
-	Timezone    string `json:"timezone"`
 	GraceTime   int    `json:"grace_time"`
 }
 
@@ -74,7 +73,6 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 		Name:        jobRequest.Name,
 		Description: jobRequest.Description,
 		Schedule:    jobRequest.Schedule,
-		Timezone:    jobRequest.Timezone,
 		GraceTime:   jobRequest.GraceTime,
 		Status:      models.StatusHealthy,
 		LastPing:    time.Now().UTC(),
@@ -165,7 +163,6 @@ func (s *Server) handleUpdateJob(w http.ResponseWriter, r *http.Request) {
 		Name        string `json:"name"`
 		Description string `json:"description"`
 		Schedule    string `json:"schedule"`
-		Timezone    string `json:"timezone"`
 		GraceTime   int    `json:"grace_time"`
 		Status      string `json:"status"`
 	}
@@ -183,9 +180,6 @@ func (s *Server) handleUpdateJob(w http.ResponseWriter, r *http.Request) {
 	}
 	if jobRequest.Schedule != "" {
 		job.Schedule = jobRequest.Schedule
-	}
-	if jobRequest.Timezone != "" {
-		job.Timezone = jobRequest.Timezone
 	}
 	if jobRequest.GraceTime > 0 {
 		job.GraceTime = jobRequest.GraceTime
