@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/adhocore/gronx"
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
 	"github.com/zigamedved/cronsentry/internal/models"
@@ -80,7 +81,6 @@ func (d *Database) ListJobsByUser(userID string) ([]*models.Job, error) {
 		WHERE user_id = $1
 		ORDER BY created_at DESC
 	`
-
 	rows, err := d.db.Query(query, userID)
 	if err != nil {
 		return nil, fmt.Errorf("error querying jobs: %w", err)
@@ -120,9 +120,8 @@ func (d *Database) CreateJob(job *models.Job) error {
 	query := `
 		INSERT INTO jobs (id, name, description, schedule, grace_time, 
 		                 last_ping, next_expect, status, user_id, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 	`
-
 	_, err := d.db.Exec(query,
 		job.ID, job.Name, job.Description, job.Schedule,
 		job.GraceTime, job.LastPing, job.NextExpect,
@@ -141,10 +140,10 @@ func (d *Database) UpdateJob(job *models.Job) error {
 	query := `
 		UPDATE jobs
 		SET name = $1, description = $2, schedule = $3,
-		grace_time = $4, last_ping = $5, next_expect = $6, status = $7, updated_at = $8
+		grace_time = $4, last_ping = $5, next_expect = $6, 
+		status = $7, updated_at = $8
 		WHERE id = $9 AND user_id = $10
 	`
-
 	result, err := d.db.Exec(query,
 		job.Name, job.Description, job.Schedule,
 		job.GraceTime, job.LastPing, job.NextExpect, job.Status,
@@ -167,21 +166,31 @@ func (d *Database) UpdateJob(job *models.Job) error {
 }
 
 func (d *Database) RecordPing(jobID string) error {
+	now := time.Now().UTC()
+
+	job, err := d.GetJob(jobID)
+	if err != nil {
+		return fmt.Errorf("error recording ping: %w", err)
+	}
+	nextTick, err := gronx.NextTickAfter(job.Schedule, now, true)
+	if err != nil {
+		return fmt.Errorf("error calculating next tick: %w", err)
+	}
+
 	tx, err := d.db.Begin()
 	if err != nil {
 		return fmt.Errorf("error starting transaction: %w", err)
 	}
 
-	now := time.Now().UTC()
 	query := `
 		UPDATE jobs
-		SET last_ping = $1, updated_at = $1
-		WHERE id = $2
+		SET last_ping = $1, updated_at = $1, next_expect = $2
+		WHERE id = $3
 		RETURNING status
 	`
 
 	var currentStatus models.JobStatus
-	err = tx.QueryRow(query, now, jobID).Scan(&currentStatus)
+	err = tx.QueryRow(query, now, nextTick, jobID).Scan(&currentStatus)
 	if err != nil {
 		tx.Rollback()
 		if err == sql.ErrNoRows {

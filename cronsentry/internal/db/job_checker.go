@@ -49,12 +49,12 @@ func (jc *JobChecker) checkJobs() error {
 	query := `
 		SELECT id, name, user_id, last_ping, next_expect, grace_time
 		FROM jobs
-		WHERE status != $1
-		AND next_expect < $2
+		WHERE status != $1 AND status != $2
+		AND next_expect < $3
 	`
 
 	now := time.Now().UTC()
-	rows, err := jc.db.db.Query(query, models.StatusPaused, now)
+	rows, err := jc.db.db.Query(query, models.StatusPaused, models.StatusMissing, now)
 	if err != nil {
 		return fmt.Errorf("error querying jobs: %w", err)
 	}
@@ -70,7 +70,7 @@ func (jc *JobChecker) checkJobs() error {
 			GraceTime  int
 		}
 
-		if err := rows.Scan(&job.ID, &job.Name, &job.UserID, &job.LastPing, &job.NextExpect); err != nil {
+		if err := rows.Scan(&job.ID, &job.Name, &job.UserID, &job.LastPing, &job.NextExpect, &job.GraceTime); err != nil {
 			return fmt.Errorf("error scanning job: %w", err)
 		}
 
