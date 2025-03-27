@@ -1,14 +1,17 @@
 # CronSentry
 
+Project is still a prototype and not production ready yet, so keep that in mind.
+
 CronSentry is a lightweight, reliable monitoring service for your cron jobs and scheduled tasks. Get notified immediately when your scheduled jobs fail to run on time.
 
 ## Features
 
 - **Simple Ping System**: Just add a simple curl command to your cron job
 - **Flexible Alert Thresholds**: Set custom grace periods for each job
-- **Email Notifications**: Get notified when jobs fail to run
-- **Status Dashboard**: View the health of all your jobs in one place
-- **Extensible**: Easy to add Slack, Discord, or other notification methods
+- **Email Notifications**: Get notified when jobs fail to run // In progress
+- **Status Dashboard**: View the health of all your jobs in one place // In progress
+- **Extensible**: Easy to add Slack, Discord, or other notification methods // In progress
+- **Authentication**: Authentication via TBD // In progress
 
 ### Ping System Architecture
 
@@ -16,52 +19,22 @@ CronSentry is a lightweight, reliable monitoring service for your cron jobs and 
    - Register a job in CronSentry to get a unique job ID
    - Add a simple HTTP request to the end of your cron job command:
      ```
-     * * * * * /path/to/your/script.sh && curl -s http://your-cronsentry-host:8080/api/ping/YOUR_JOB_ID > /dev/null
+     curl -s http://your-cronsentry-host:8080/api/ping/YOUR_JOB_ID
      ```
    - This curl command sends a "heartbeat" to CronSentry after your job completes successfully
 
 2. **Server-side Monitoring**:
    - When a ping is received, CronSentry updates the job's status to "healthy"
    - A background service runs every 10 seconds to check for missing jobs
-   - If a job misses its expected ping time, its status changes to "missing"
+   - If a job misses its expected ping time + grace period, its status changes to "missing"
    - Missing jobs trigger notifications based on your settings
 
 3. **Job Status Lifecycle**:
    - **Healthy**: Job is running on schedule
-   - **Late**: Job pinged but outside grace period
    - **Missing**: No ping received when expected
    - **Paused**: Monitoring temporarily disabled
 
 This design is lightweight and effective because it requires no agent installation on your servers - just a simple curl command added to your existing cron jobs.
-
-## Quick Start
-
-### Using Docker Compose
-
-1. Clone the repository:
-   ```
-   git clone https://github.com/yourusername/cronsentry.git
-   cd cronsentry
-   ```
-
-2. Start the application:
-   ```
-   docker-compose up -d
-   ```
-
-3. Access the dashboard at http://localhost:8080
-
-### Using Existing Installation
-
-1. Add a ping to your cron job by adding this at the end of your command:
-   ```
-   && curl -s http://your-cronsentry-host:8080/api/ping/YOUR_JOB_ID > /dev/null
-   ```
-
-2. Example crontab entry:
-   ```
-   0 * * * * /path/to/your/script.sh && curl -s http://localhost:8080/api/ping/abc123 > /dev/null
-   ```
 
 ## API Usage
 
@@ -84,39 +57,22 @@ curl -X POST http://localhost:8080/api/jobs \
 curl -X POST http://localhost:8080/api/ping/YOUR_JOB_ID
 ```
 
-## Development
+## Quick Start
 
-### Prerequisites
-
-- Go 1.22 or higher
-- PostgreSQL 13 or higher
-
-### Local Setup
+### Using Docker Compose
 
 1. Clone the repository:
    ```
-   git clone https://github.com/zigamedved/cronsentry.git
+   git clone https://github.com/yourusername/cronsentry.git
    cd cronsentry
    ```
 
-2. Install dependencies:
+2. Start the application:
    ```
-   go mod download
-   ```
-
-3. Set up environment variables:
-   ```
-   export DB_HOST=localhost
-   export DB_PORT=5432
-   export DB_USER=postgres
-   export DB_PASSWORD=postgres
-   export DB_NAME=cronsentry
+   docker-compose up -d
    ```
 
-4. Run the application:
-   ```
-   go run ./cmd
-   ```
+3. Access the dashboard at http://localhost:8080 // Feature in progress
 
 ## Contributing
 

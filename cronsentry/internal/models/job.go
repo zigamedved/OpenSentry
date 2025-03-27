@@ -8,7 +8,6 @@ type JobStatus string
 
 const (
 	StatusHealthy JobStatus = "healthy"
-	StatusLate    JobStatus = "late"
 	StatusMissing JobStatus = "missing"
 	StatusPaused  JobStatus = "paused"
 )
