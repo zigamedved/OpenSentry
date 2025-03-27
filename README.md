@@ -63,7 +63,7 @@ curl -X POST http://localhost:8080/api/ping/YOUR_JOB_ID
 
 1. Clone the repository:
    ```
-   git clone https://github.com/yourusername/cronsentry.git
+   git clone https://github.com/zigamedved/OpenSentry.git
    cd cronsentry
    ```
 
@@ -72,7 +72,7 @@ curl -X POST http://localhost:8080/api/ping/YOUR_JOB_ID
    docker-compose up -d
    ```
 
-3. Access the dashboard at http://localhost:8080 // Feature in progress
+3. Access the dashboard at http://localhost:8080
 
 ## Contributing
 
