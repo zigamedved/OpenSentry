@@ -30,18 +30,33 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("GET /api/jobs", s.handleListJobs)
 	mux.HandleFunc("GET /api/jobs/{id}", s.handleGetJob)
 	mux.HandleFunc("PUT /api/jobs/{id}", s.handleUpdateJob)
+	mux.HandleFunc("DELETE /api/jobs/{id}", s.handleDeleteJob)
 	mux.HandleFunc("POST /api/ping/{id}", s.handlePing)
-	return s.loggingMiddleware(s.recoveryMiddleware(mux))
+	return s.corsMiddleware(s.loggingMiddleware(s.recoveryMiddleware(mux)))
 }
 
-var jobRequest struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Schedule    string `json:"schedule"`
-	GraceTime   int    `json:"grace_time"`
+func (s *Server) corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
+	var jobRequest struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Schedule    string `json:"schedule"`
+		GraceTime   int    `json:"grace_time"`
+	}
 
 	if err := json.NewDecoder(r.Body).Decode(&jobRequest); err != nil {
 		s.logger.Println("Invalid request body")
@@ -101,6 +116,11 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		s.logger.Printf("Error listing jobs: %v", err)
 		http.Error(w, "Failed to list jobs", http.StatusInternalServerError)
 		return
+	}
+
+	// Ensure we always return an array, even if empty
+	if jobs == nil {
+		jobs = make([]*models.Job, 0)
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -234,4 +254,37 @@ func (s *Server) recoveryMiddleware(next http.Handler) http.Handler {
 		}()
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (s *Server) handleDeleteJob(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "Job ID is required", http.StatusBadRequest)
+		return
+	}
+
+	job, err := s.db.GetJob(id)
+	if err != nil {
+		s.logger.Printf("Error getting job: %v", err)
+		http.Error(w, "Failed to get job", http.StatusInternalServerError)
+		return
+	}
+
+	if job == nil {
+		http.Error(w, "Job not found", http.StatusNotFound)
+		return
+	}
+
+	if job.UserID != "test-user" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if err := s.db.DeleteJob(id); err != nil {
+		s.logger.Printf("Error deleting job: %v", err)
+		http.Error(w, "Failed to delete job", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }

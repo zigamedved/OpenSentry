@@ -10,7 +10,6 @@ FROM alpine:latest
 WORKDIR /app
 COPY --from=builder /app/cronsentry .
 COPY --from=builder /app/internal/db/schema.sql ./internal/db/schema.sql
-COPY --from=builder /app/internal/templates ./internal/templates
 
 ENV PORT=8080
 

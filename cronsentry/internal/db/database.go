@@ -245,3 +245,22 @@ func getEnv(key, defaultValue string) string {
 func (d *Database) GetDB() *sql.DB {
 	return d.db
 }
+
+func (d *Database) DeleteJob(id string) error {
+	query := `DELETE FROM jobs WHERE id = $1`
+	result, err := d.db.Exec(query, id)
+	if err != nil {
+		return fmt.Errorf("error deleting job: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("error getting rows affected: %w", err)
+	}
+
+	if rows == 0 {
+		return fmt.Errorf("job not found")
+	}
+
+	return nil
+}
