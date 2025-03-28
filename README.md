@@ -13,6 +13,10 @@ CronSentry is a lightweight, reliable monitoring service for your cron jobs and 
 - **Extensible**: Easy to add Slack, Discord, or other notification methods // In progress
 - **Authentication**: Authentication via TBD // In progress
 
+## Dashboard
+
+![alt text](./assets/dashboard.png)
+
 ### Ping System Architecture
 
 1. **User-side Integration**:
