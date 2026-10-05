@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"time"
@@ -155,6 +156,34 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(job)
 }
 
+func pingHTTPStatus(err error) int {
+	if err == nil {
+		return http.StatusOK
+	}
+	if errors.Is(err, db.ErrJobNotFound) {
+		return http.StatusNotFound
+	}
+	return http.StatusInternalServerError
+}
+
+// applyScheduleChange validates a new cron schedule and recomputes next_expect
+// when the expression actually changes. last_ping is left untouched.
+func applyScheduleChange(job *models.Job, newSchedule string) error {
+	if !gronx.IsValid(newSchedule) {
+		return errors.New("invalid CRON schedule")
+	}
+	scheduleChanged := newSchedule != job.Schedule
+	job.Schedule = newSchedule
+	if scheduleChanged {
+		nextTick, err := gronx.NextTick(newSchedule, true)
+		if err != nil {
+			return err
+		}
+		job.NextExpect = nextTick
+	}
+	return nil
+}
+
 func (s *Server) handleUpdateJob(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
@@ -199,7 +228,11 @@ func (s *Server) handleUpdateJob(w http.ResponseWriter, r *http.Request) {
 		job.Description = jobRequest.Description
 	}
 	if jobRequest.Schedule != "" {
-		job.Schedule = jobRequest.Schedule
+		if err := applyScheduleChange(job, jobRequest.Schedule); err != nil {
+			s.logger.Println("Invalid CRON schedule provided")
+			http.Error(w, "Invalid CRON schedule provided", http.StatusBadRequest)
+			return
+		}
 	}
 	if jobRequest.GraceTime > 0 {
 		job.GraceTime = jobRequest.GraceTime
@@ -226,6 +259,11 @@ func (s *Server) handlePing(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.db.RecordPing(id); err != nil {
+		status := pingHTTPStatus(err)
+		if status == http.StatusNotFound {
+			http.Error(w, "Job not found", http.StatusNotFound)
+			return
+		}
 		s.logger.Printf("Error recording ping: %v", err)
 		http.Error(w, "Failed to record ping", http.StatusInternalServerError)
 		return

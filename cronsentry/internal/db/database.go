@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -11,6 +12,20 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/zigamedved/cronsentry/internal/models"
 )
+
+// ErrJobNotFound is returned when a job ID does not exist.
+var ErrJobNotFound = errors.New("job not found")
+
+// requireJob maps GetJob's (nil, nil) missing-row result to ErrJobNotFound.
+func requireJob(job *models.Job, err error) (*models.Job, error) {
+	if err != nil {
+		return nil, err
+	}
+	if job == nil {
+		return nil, ErrJobNotFound
+	}
+	return job, nil
+}
 
 type Database struct {
 	db *sql.DB
@@ -168,8 +183,11 @@ func (d *Database) UpdateJob(job *models.Job) error {
 func (d *Database) RecordPing(jobID string) error {
 	now := time.Now().UTC()
 
-	job, err := d.GetJob(jobID)
+	job, err := requireJob(d.GetJob(jobID))
 	if err != nil {
+		if errors.Is(err, ErrJobNotFound) {
+			return err
+		}
 		return fmt.Errorf("error recording ping: %w", err)
 	}
 	nextTick, err := gronx.NextTickAfter(job.Schedule, now, true)
@@ -194,7 +212,7 @@ func (d *Database) RecordPing(jobID string) error {
 	if err != nil {
 		tx.Rollback()
 		if err == sql.ErrNoRows {
-			return fmt.Errorf("job not found")
+			return ErrJobNotFound
 		}
 		return fmt.Errorf("error updating job ping: %w", err)
 	}
