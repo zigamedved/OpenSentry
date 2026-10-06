@@ -1,3 +1,5 @@
+import { useState } from 'react';
+
 interface Job {
   id: string;
   name: string;
@@ -10,10 +12,18 @@ interface Job {
 
 interface JobCardProps {
   job: Job;
+  apiOrigin: string;
   onDelete: (id: string) => void;
 }
 
-export function JobCard({ job, onDelete }: JobCardProps) {
+export function pingCurl(apiOrigin: string, jobId: string) {
+  const root = apiOrigin.replace(/\/$/, '');
+  return `curl -X POST ${root}/api/ping/${jobId}`;
+}
+
+export function JobCard({ job, apiOrigin, onDelete }: JobCardProps) {
+  const [copied, setCopied] = useState(false);
+  const curl = pingCurl(apiOrigin, job.id);
   const statusColors = {
     healthy: 'bg-green-100 text-green-800',
     late: 'bg-yellow-100 text-yellow-800',
@@ -45,6 +55,34 @@ export function JobCard({ job, onDelete }: JobCardProps) {
         <div className="flex justify-between text-sm">
           <span className="text-gray-500">Next Expected:</span>
           <span className="font-medium">{new Date(job.next_expect).toLocaleString()}</span>
+        </div>
+      </div>
+
+      <div className="mt-4">
+        <p className="text-xs font-medium text-gray-500">Ping command</p>
+        <p className="mt-1 text-xs text-gray-500">The job id in this URL is a secret. Anyone who has it can record a ping.</p>
+        <div className="mt-2 flex items-center gap-2">
+          <code className="block flex-1 overflow-x-auto rounded bg-gray-50 px-2 py-1 text-xs text-gray-800">{curl}</code>
+          <button
+            type="button"
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(curl);
+              } catch {
+                const area = document.createElement('textarea');
+                area.value = curl;
+                document.body.appendChild(area);
+                area.select();
+                document.execCommand('copy');
+                area.remove();
+              }
+              setCopied(true);
+              window.setTimeout(() => setCopied(false), 1500);
+            }}
+            className="shrink-0 rounded-md bg-gray-100 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-200"
+          >
+            {copied ? 'Copied' : 'Copy'}
+          </button>
         </div>
       </div>
 

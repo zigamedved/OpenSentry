@@ -6,6 +6,19 @@ import { PlusIcon } from '@heroicons/react/24/outline';
 
 // Empty string means same-origin /api (nginx in Compose, Vite proxy in dev).
 const API_URL = import.meta.env.VITE_API_URL ?? '';
+const TOKEN_KEY = 'opensentry.apiToken';
+
+function authHeaders(token: string, json = false): HeadersInit {
+  const headers: Record<string, string> = {};
+  if (json) headers['Content-Type'] = 'application/json';
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return headers;
+}
+
+function apiOrigin() {
+  if (API_URL) return API_URL.replace(/\/$/, '');
+  return window.location.origin;
+}
 
 interface Job {
   id: string;
@@ -21,22 +34,40 @@ function App() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [token, setToken] = useState(() => sessionStorage.getItem(TOKEN_KEY) || import.meta.env.VITE_API_TOKEN || '');
+  const [tokenDraft, setTokenDraft] = useState(token);
+  const [authError, setAuthError] = useState(false);
 
   useEffect(() => {
-    fetchJobs();
+    fetchJobs(token);
   }, []);
 
-  const fetchJobs = async () => {
+  const fetchJobs = async (activeToken: string) => {
     try {
-      const response = await fetch(`${API_URL}/api/jobs`);
+      const response = await fetch(`${API_URL}/api/jobs`, { headers: authHeaders(activeToken) });
+      if (response.status === 401) {
+        setAuthError(true);
+        setJobs([]);
+        return;
+      }
       if (!response.ok) throw new Error('Failed to fetch jobs');
       const data = await response.json();
+      setAuthError(false);
       setJobs(data);
     } catch (error) {
       console.error('Error fetching jobs:', error);
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const saveToken = (event: React.FormEvent) => {
+    event.preventDefault();
+    const next = tokenDraft.trim();
+    sessionStorage.setItem(TOKEN_KEY, next);
+    setToken(next);
+    setIsLoading(true);
+    fetchJobs(next);
   };
 
   const stats = {
@@ -49,7 +80,12 @@ function App() {
     try {
       const response = await fetch(`${API_URL}/api/jobs/${id}`, {
         method: 'DELETE',
+        headers: authHeaders(token),
       });
+      if (response.status === 401) {
+        setAuthError(true);
+        return;
+      }
       if (!response.ok) throw new Error('Failed to delete job');
       setJobs(jobs.filter(job => job.id !== id));
     } catch (error) {
@@ -61,11 +97,13 @@ function App() {
     try {
       const response = await fetch(`${API_URL}/api/jobs`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: authHeaders(token, true),
         body: JSON.stringify(newJob),
       });
+      if (response.status === 401) {
+        setAuthError(true);
+        return;
+      }
       if (!response.ok) throw new Error('Failed to create job');
       const job = await response.json();
       setJobs([...jobs, job]);
@@ -108,13 +146,38 @@ function App() {
 
       <main className="mx-auto max-w-7xl py-6 sm:px-6 lg:px-8">
         <div className="px-4 sm:px-0">
+          <form onSubmit={saveToken} className="mb-6 rounded-lg bg-white p-4 shadow">
+            <label htmlFor="api-token" className="block text-sm font-medium text-gray-700">
+              API token
+            </label>
+            <p className="mt-1 text-sm text-gray-500">
+              Management requests use the server <code>API_TOKEN</code>. Ping URLs do not.
+              {authError ? ' The current token was rejected.' : ''}
+            </p>
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+              <input
+                id="api-token"
+                type="password"
+                value={tokenDraft}
+                onChange={(event) => setTokenDraft(event.target.value)}
+                autoComplete="off"
+                className="block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm"
+              />
+              <button
+                type="submit"
+                className="rounded-md bg-gray-900 px-3 py-2 text-sm font-semibold text-white"
+              >
+                Save token
+              </button>
+            </div>
+          </form>
           <Stats {...stats} />
           
           <div className="mt-8">
             {jobs.length > 0 ? (
               <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
                 {jobs.map(job => (
-                  <JobCard key={job.id} job={job} onDelete={handleDelete} />
+                  <JobCard key={job.id} job={job} apiOrigin={apiOrigin()} onDelete={handleDelete} />
                 ))}
               </div>
             ) : (

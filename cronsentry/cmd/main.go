@@ -35,16 +35,22 @@ func main() {
 		apiKey = "disabled"
 		logger.Println("SENDGRID_API_KEY unset; email notifications run in dry-run mode")
 	}
-	sendgridClient := integrations.NewSendgridSendClient(apiKey, logger, enabled)
+	fromName, fromEmail := integrations.ParseEmailFrom(os.Getenv("EMAIL_FROM"))
+	sendgridClient := integrations.NewSendgridSendClient(apiKey, logger, enabled, fromName, fromEmail)
 	notificationProcessor := notifications.NewNotificationProcessor(
 		database.GetDB(),
 		sendgridClient,
 		logger,
+		os.Getenv("DASHBOARD_URL"),
 	)
 	notificationProcessor.Start()
 	logger.Println("Notification processor started")
 
-	server := api.NewServer(database, logger)
+	apiToken := os.Getenv("API_TOKEN")
+	if apiToken == "" {
+		logger.Println("API_TOKEN unset; management routes will return 401")
+	}
+	server := api.NewServer(database, logger, apiToken)
 	addr := ":8080"
 	if port := os.Getenv("PORT"); port != "" {
 		addr = ":" + port
