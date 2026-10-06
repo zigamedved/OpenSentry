@@ -4,7 +4,8 @@ import { Stats } from './components/Stats';
 import { NewJobModal } from './components/NewJobModal';
 import { PlusIcon } from '@heroicons/react/24/outline';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
+// Empty string means same-origin /api (nginx in Compose, Vite proxy in dev).
+const API_URL = import.meta.env.VITE_API_URL ?? '';
 
 interface Job {
   id: string;
@@ -89,7 +90,7 @@ function App() {
           <div className="flex h-16 justify-between">
             <div className="flex">
               <div className="flex flex-shrink-0 items-center">
-                <h1 className="text-2xl font-bold text-gray-900">CronSentry</h1>
+                <h1 className="text-2xl font-bold text-gray-900">OpenSentry</h1>
               </div>
             </div>
             <div className="flex items-center">

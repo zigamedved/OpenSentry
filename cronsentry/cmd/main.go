@@ -9,14 +9,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/zigamedved/cronsentry/internal/api"
-	"github.com/zigamedved/cronsentry/internal/db"
-	"github.com/zigamedved/cronsentry/internal/notifications"
-	"github.com/zigamedved/cronsentry/internal/notifications/integrations"
+	"github.com/zigamedved/OpenSentry/internal/api"
+	"github.com/zigamedved/OpenSentry/internal/db"
+	"github.com/zigamedved/OpenSentry/internal/notifications"
+	"github.com/zigamedved/OpenSentry/internal/notifications/integrations"
 )
 
 func main() {
-	logger := log.New(os.Stdout, "cronsentry: ", log.LstdFlags)
+	logger := log.New(os.Stdout, "opensentry: ", log.LstdFlags)
 
 	database, err := db.NewDatabase()
 	if err != nil {

@@ -4,14 +4,14 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o cronsentry ./cmd
+RUN CGO_ENABLED=0 GOOS=linux go build -o opensentry ./cmd
 
 FROM alpine:latest
 WORKDIR /app
-COPY --from=builder /app/cronsentry .
+COPY --from=builder /app/opensentry .
 COPY --from=builder /app/internal/db/schema.sql ./internal/db/schema.sql
 
 ENV PORT=8080
 
 EXPOSE 8080
-CMD ["./cronsentry"] 
+CMD ["./opensentry"] 

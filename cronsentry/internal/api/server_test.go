@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zigamedved/cronsentry/internal/db"
-	"github.com/zigamedved/cronsentry/internal/models"
+	"github.com/zigamedved/OpenSentry/internal/db"
+	"github.com/zigamedved/OpenSentry/internal/models"
 )
 
 func TestPingHTTPStatus(t *testing.T) {

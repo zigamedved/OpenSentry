@@ -101,16 +101,16 @@ func (np *NotificationProcessor) processNotifications() error {
 }
 
 func (np *NotificationProcessor) sendEmailNotification(id, email, jobName, message string) error {
-	subject := fmt.Sprintf("CronSentry Alert: Job '%s'", jobName)
+	subject := fmt.Sprintf("OpenSentry Alert: Job '%s'", jobName)
 	body := fmt.Sprintf(`
 		<html>
 			<body>
-				<h2>CronSentry Alert</h2>
+				<h2>OpenSentry Alert</h2>
 				<p>%s</p>
 				<p>Job: <strong>%s</strong></p>
 				<p>Time: <strong>%s</strong></p>
 				<hr>
-				<p>View details in your <a href="https://cronsentry.example.com/dashboard">CronSentry Dashboard</a></p>
+				<p>View details in your <a href="https://example.com/dashboard">OpenSentry Dashboard</a></p>
 			</body>
 		</html>
 	`, message, jobName, time.Now().Format(time.RFC1123))

@@ -10,7 +10,7 @@ import (
 	"github.com/adhocore/gronx"
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
-	"github.com/zigamedved/cronsentry/internal/models"
+	"github.com/zigamedved/OpenSentry/internal/models"
 )
 
 // ErrJobNotFound is returned when a job ID does not exist.
