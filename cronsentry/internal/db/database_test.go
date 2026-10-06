@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/zigamedved/cronsentry/internal/models"
+	"github.com/zigamedved/OpenSentry/internal/models"
 )
 
 func TestRequireJob(t *testing.T) {

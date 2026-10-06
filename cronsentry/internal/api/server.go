@@ -9,8 +9,8 @@ import (
 
 	"github.com/adhocore/gronx"
 	"github.com/google/uuid"
-	"github.com/zigamedved/cronsentry/internal/db"
-	"github.com/zigamedved/cronsentry/internal/models"
+	"github.com/zigamedved/OpenSentry/internal/db"
+	"github.com/zigamedved/OpenSentry/internal/models"
 )
 
 type Server struct {

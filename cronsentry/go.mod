@@ -1,4 +1,4 @@
-module github.com/zigamedved/cronsentry
+module github.com/zigamedved/OpenSentry
 
 go 1.22.4
 

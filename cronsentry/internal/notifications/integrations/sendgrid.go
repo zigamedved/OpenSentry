@@ -40,7 +40,7 @@ func (sc SendgridClient) SendEmail(to, subject, body string) error {
 		return nil
 	}
 
-	from := mail.NewEmail("CronSentry", "cronsentry@example.com")
+	from := mail.NewEmail("OpenSentry", "noreply@example.com")
 	toEmail := mail.NewEmail(to, to)
 	message := mail.NewSingleEmail(from, subject, toEmail, "", body)
 	response, err := sc.Send(message)

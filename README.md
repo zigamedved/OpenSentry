@@ -1,15 +1,19 @@
-# CronSentry
+# OpenSentry
+
+[![CI](https://github.com/zigamedved/OpenSentry/actions/workflows/ci.yml/badge.svg)](https://github.com/zigamedved/OpenSentry/actions/workflows/ci.yml)
 
 Project is still a prototype and not production ready yet, so keep that in mind.
 
-CronSentry is a lightweight, reliable monitoring service for your cron jobs and scheduled tasks. Get notified immediately when your scheduled jobs fail to run on time.
+OpenSentry is a lightweight, reliable monitoring service for your cron jobs and scheduled tasks. Get notified immediately when your scheduled jobs fail to run on time.
+
+The Go module and Docker app live in [`cronsentry/`](cronsentry/). That directory name is the original package path and is kept so existing clones and Compose files keep working. The product name is OpenSentry.
 
 ## Features
 
 - **Simple Ping System**: Just add a simple curl command to your cron job
 - **Flexible Alert Thresholds**: Set custom grace periods for each job
-- **Email Notifications**: Get notified when jobs fail to run // In progress
-- **Status Dashboard**: View the health of all your jobs in one place // In progress
+- **Email Notifications**: Get notified when jobs fail to run (SendGrid when configured; otherwise dry-run)
+- **Status Dashboard**: View the health of all your jobs in one place
 - **Extensible**: Easy to add Slack, Discord, or other notification methods // In progress
 - **Authentication**: Authentication via TBD // In progress
 
@@ -20,17 +24,18 @@ CronSentry is a lightweight, reliable monitoring service for your cron jobs and 
 ### Ping System Architecture
 
 1. **User-side Integration**:
-   - Register a job in CronSentry to get a unique job ID
-   - Add a simple HTTP request to the end of your cron job command:
+   - Register a job in OpenSentry to get a unique job ID
+   - Add an HTTP POST to the end of your cron job command:
      ```
-     curl -s http://your-cronsentry-host:8080/api/ping/YOUR_JOB_ID
+     curl -s -X POST http://your-opensentry-host:8080/api/ping/YOUR_JOB_ID
      ```
-   - This curl command sends a "heartbeat" to CronSentry after your job completes successfully
+   - This curl command sends a "heartbeat" to OpenSentry after your job completes successfully
+   - Treat the job ID as a secret. Anyone who has it can record a ping.
 
 2. **Server-side Monitoring**:
-   - When a ping is received, CronSentry updates the job's status to "healthy"
+   - When a ping is received, OpenSentry updates the job's status to "healthy"
    - A background service runs every 10 seconds to check for missing jobs
-   - If a job misses its expected ping time + grace period, its status changes to "missing"
+   - If a job misses its expected ping time plus its grace period, its status changes to "missing"
    - Missing jobs trigger notifications based on your settings
 
 3. **Job Status Lifecycle**:
@@ -38,7 +43,7 @@ CronSentry is a lightweight, reliable monitoring service for your cron jobs and 
    - **Missing**: No ping received when expected
    - **Paused**: Monitoring temporarily disabled
 
-This design is lightweight and effective because it requires no agent installation on your servers - just a simple curl command added to your existing cron jobs.
+This design is lightweight and effective because it requires no agent installation on your servers — just a curl command added to your existing cron jobs.
 
 ## API Usage
 
@@ -57,6 +62,8 @@ curl -X POST http://localhost:8080/api/jobs \
 
 ### Ping a Job
 
+Pings are HTTP **POST** requests. A GET does not record a heartbeat.
+
 ```bash
 curl -X POST http://localhost:8080/api/ping/YOUR_JOB_ID
 ```
@@ -66,18 +73,59 @@ curl -X POST http://localhost:8080/api/ping/YOUR_JOB_ID
 ### Using Docker Compose
 
 1. Clone the repository:
+
    ```
    git clone https://github.com/zigamedved/OpenSentry.git
-   cd cronsentry
+   cd OpenSentry/cronsentry
    ```
 
 2. Start the application:
+
    ```
-   docker-compose up -d
+   docker compose up -d --build
    ```
 
-3. Access the dashboard at http://localhost:8080
+3. Open the dashboard at http://localhost:3000. The API listens on http://localhost:8080.
+
+4. Create a job from the dashboard or the API, then copy its id into a ping:
+
+   ```
+   curl -X POST http://localhost:8080/api/ping/YOUR_JOB_ID
+   ```
+
+5. Refresh the dashboard. The job's last ping time updates and the status stays healthy.
+
+The Compose UI is nginx on port 3000. It proxies `/api` to the API container, and the frontend calls that same-origin path. `VITE_API_URL` is a **build** argument (Vite inlines it). Leave it empty so the browser uses relative `/api` URLs. Set it only when the API is on a different origin:
+
+```
+docker compose build --build-arg VITE_API_URL=https://api.example.com web
+```
+
+### Local Go and Vite
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). The dev dashboard is http://localhost:5173 and proxies `/api` to http://localhost:8080.
+
+## Configuration
+
+The API reads these environment variables. Compose sets the database values shown below.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `DB_HOST` | `localhost` | Postgres host |
+| `DB_PORT` | `5432` | Postgres port |
+| `DB_USER` | `postgres` | Postgres user |
+| `DB_PASSWORD` | `postgres` | Postgres password |
+| `DB_NAME` | `cronsentry` | Database name |
+| `DB_SSLMODE` | `disable` | lib/pq SSL mode. Use `require` for hosted Postgres. |
+| `PORT` | `8080` | API listen port |
+| `SENDGRID_API_KEY` | unset | When set, missing-job email is sent through SendGrid. When unset, the API logs a dry-run line and does not call SendGrid. |
+
+Compose does not configure an email provider. A missing `SENDGRID_API_KEY` is safe: alerts are logged and not marked failed.
+
+## License
+
+OpenSentry is released under the [MIT License](LICENSE). You may use, modify, and ship it, including as a commercial hosted service, as long as the copyright notice and this license are included with the software.
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).

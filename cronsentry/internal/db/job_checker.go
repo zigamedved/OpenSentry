@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/zigamedved/cronsentry/internal/models"
+	"github.com/zigamedved/OpenSentry/internal/models"
 )
 
 type JobChecker struct {
