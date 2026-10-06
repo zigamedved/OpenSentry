@@ -29,7 +29,13 @@ func main() {
 	}
 	logger.Println("Database initialized successfully")
 
-	sendgridClient := integrations.NewSendgridSendClient("API_KEY", logger, false)
+	apiKey := os.Getenv("SENDGRID_API_KEY")
+	enabled := apiKey != ""
+	if !enabled {
+		apiKey = "disabled"
+		logger.Println("SENDGRID_API_KEY unset; email notifications run in dry-run mode")
+	}
+	sendgridClient := integrations.NewSendgridSendClient(apiKey, logger, enabled)
 	notificationProcessor := notifications.NewNotificationProcessor(
 		database.GetDB(),
 		sendgridClient,

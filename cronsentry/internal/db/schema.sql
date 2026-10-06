@@ -37,8 +37,12 @@ CREATE TABLE IF NOT EXISTS notifications (
     type VARCHAR(50) NOT NULL,
     status VARCHAR(50) NOT NULL DEFAULT 'pending', 
     sent_at TIMESTAMPTZ,
+    data JSONB DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL
 );
+
+-- Existing installs created notifications without data; add it if missing.
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS data JSONB DEFAULT '{}';
 
 CREATE INDEX IF NOT EXISTS idx_jobs_user_id ON jobs(user_id);
 CREATE INDEX IF NOT EXISTS idx_job_events_job_id ON job_events(job_id);

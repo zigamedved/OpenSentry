@@ -45,12 +45,20 @@ func (jc *JobChecker) Stop() {
 	close(jc.done)
 }
 
+// PastGraceDeadline reports whether now is strictly after nextExpect + graceMinutes.
+// A job should be marked missing only when this returns true.
+func PastGraceDeadline(nextExpect time.Time, graceMinutes int, now time.Time) bool {
+	deadline := nextExpect.Add(time.Duration(graceMinutes) * time.Minute)
+	return now.After(deadline)
+}
+
 func (jc *JobChecker) checkJobs() error {
+	// Filter in SQL so grace minutes are applied (next_expect + grace), not ignored.
 	query := `
 		SELECT id, name, user_id, last_ping, next_expect, grace_time
 		FROM jobs
 		WHERE status != $1 AND status != $2
-		AND next_expect < $3
+		AND next_expect + (grace_time * interval '1 minute') < $3
 	`
 
 	now := time.Now().UTC()
@@ -74,10 +82,13 @@ func (jc *JobChecker) checkJobs() error {
 			return fmt.Errorf("error scanning job: %w", err)
 		}
 
-		if job.NextExpect.Add(time.Duration(time.Duration(job.GraceTime).Minutes())).Before(now) {
-			if err := jc.markJobMissing(job.ID, job.Name, job.UserID); err != nil {
-				jc.logger.Printf("Error marking job as missing: %v", err)
-			}
+		// Defense in depth: same boundary as the SQL filter.
+		if !PastGraceDeadline(job.NextExpect, job.GraceTime, now) {
+			continue
+		}
+
+		if err := jc.markJobMissing(job.ID, job.Name, job.UserID); err != nil {
+			jc.logger.Printf("Error marking job as missing: %v", err)
 		}
 	}
 

@@ -147,11 +147,12 @@ func (np *NotificationProcessor) markNotificationSent(id string) error {
 func (np *NotificationProcessor) markNotificationFailed(id, reason string) error {
 	query := `
 		UPDATE notifications
-		SET status = 'failed', data = jsonb_set(COALESCE(data, '{}'::jsonb), '{error}', $1)
+		SET status = 'failed',
+		    data = jsonb_build_object('error', $1::text)
 		WHERE id = $2
 	`
 
-	_, err := np.db.Exec(query, fmt.Sprintf("\"%s\"", reason), id)
+	_, err := np.db.Exec(query, reason, id)
 	if err != nil {
 		return fmt.Errorf("error updating notification: %w", err)
 	}
