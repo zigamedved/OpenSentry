@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,6 +37,7 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("POST /api/jobs", s.handleCreateJob)
 	mux.HandleFunc("GET /api/jobs", s.handleListJobs)
 	mux.HandleFunc("GET /api/jobs/{id}", s.handleGetJob)
+	mux.HandleFunc("GET /api/jobs/{id}/events", s.handleListEvents)
 	mux.HandleFunc("PUT /api/jobs/{id}", s.handleUpdateJob)
 	mux.HandleFunc("DELETE /api/jobs/{id}", s.handleDeleteJob)
 	mux.HandleFunc("POST /api/ping/{id}", s.handlePing)
@@ -278,6 +280,49 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(job)
 }
 
+func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "Job ID is required", http.StatusBadRequest)
+		return
+	}
+
+	job, err := s.db.GetJob(id)
+	if err != nil {
+		s.logger.Printf("Error getting job: %v", err)
+		http.Error(w, "Failed to get job", http.StatusInternalServerError)
+		return
+	}
+	if job == nil {
+		http.Error(w, "Job not found", http.StatusNotFound)
+		return
+	}
+	if job.UserID != demoUserID {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	limit := 50
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 100 {
+			http.Error(w, "Invalid limit", http.StatusBadRequest)
+			return
+		}
+		limit = parsed
+	}
+
+	events, err := s.db.ListJobEvents(id, limit)
+	if err != nil {
+		s.logger.Printf("Error listing job events: %v", err)
+		http.Error(w, "Failed to list job events", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(events)
+}
+
 func pingHTTPStatus(err error) int {
 	if err == nil {
 		return http.StatusOK
@@ -286,6 +331,29 @@ func pingHTTPStatus(err error) int {
 		return http.StatusNotFound
 	}
 	return http.StatusInternalServerError
+}
+
+var errInvalidStatus = errors.New("invalid status")
+
+// applyStatusChange sets a job's status. Resuming from paused recomputes
+// next_expect from now so the missed maintenance window does not alert.
+// last_ping is left untouched.
+func applyStatusChange(job *models.Job, status string) error {
+	next := models.JobStatus(status)
+	switch next {
+	case models.StatusHealthy, models.StatusMissing, models.StatusPaused:
+	default:
+		return errInvalidStatus
+	}
+	if job.Status == models.StatusPaused && next == models.StatusHealthy {
+		nextTick, err := gronx.NextTick(job.Schedule, true)
+		if err != nil {
+			return err
+		}
+		job.NextExpect = nextTick
+	}
+	job.Status = next
+	return nil
 }
 
 // applyScheduleChange validates a new cron schedule and recomputes next_expect
@@ -331,11 +399,11 @@ func (s *Server) handleUpdateJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var jobRequest struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		Schedule    string `json:"schedule"`
-		GraceTime   int    `json:"grace_time"`
-		Status      string `json:"status"`
+		Name        *string `json:"name"`
+		Description *string `json:"description"`
+		Schedule    *string `json:"schedule"`
+		GraceTime   *int    `json:"grace_time"`
+		Status      *string `json:"status"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&jobRequest); err != nil {
@@ -343,24 +411,54 @@ func (s *Server) handleUpdateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if jobRequest.Name != "" {
-		job.Name = jobRequest.Name
+	if jobRequest.Name != nil && strings.TrimSpace(*jobRequest.Name) == "" {
+		http.Error(w, "Name is required", http.StatusBadRequest)
+		return
 	}
-	if jobRequest.Description != "" {
-		job.Description = jobRequest.Description
+	if jobRequest.GraceTime != nil && *jobRequest.GraceTime < 1 {
+		http.Error(w, "Grace time must be positive", http.StatusBadRequest)
+		return
 	}
-	if jobRequest.Schedule != "" {
-		if err := applyScheduleChange(job, jobRequest.Schedule); err != nil {
+	if jobRequest.Status != nil && *jobRequest.Status != "" {
+		switch models.JobStatus(*jobRequest.Status) {
+		case models.StatusHealthy, models.StatusMissing, models.StatusPaused:
+		default:
+			http.Error(w, "Invalid status", http.StatusBadRequest)
+			return
+		}
+	}
+	if jobRequest.Schedule != nil && *jobRequest.Schedule != "" && !gronx.IsValid(*jobRequest.Schedule) {
+		s.logger.Println("Invalid CRON schedule provided")
+		http.Error(w, "Invalid CRON schedule provided", http.StatusBadRequest)
+		return
+	}
+
+	if jobRequest.Name != nil {
+		job.Name = strings.TrimSpace(*jobRequest.Name)
+	}
+	if jobRequest.Description != nil {
+		job.Description = *jobRequest.Description
+	}
+	if jobRequest.Schedule != nil && *jobRequest.Schedule != "" {
+		if err := applyScheduleChange(job, *jobRequest.Schedule); err != nil {
 			s.logger.Println("Invalid CRON schedule provided")
 			http.Error(w, "Invalid CRON schedule provided", http.StatusBadRequest)
 			return
 		}
 	}
-	if jobRequest.GraceTime > 0 {
-		job.GraceTime = jobRequest.GraceTime
+	if jobRequest.GraceTime != nil {
+		job.GraceTime = *jobRequest.GraceTime
 	}
-	if jobRequest.Status != "" {
-		job.Status = models.JobStatus(jobRequest.Status)
+	if jobRequest.Status != nil && *jobRequest.Status != "" {
+		if err := applyStatusChange(job, *jobRequest.Status); err != nil {
+			if errors.Is(err, errInvalidStatus) {
+				http.Error(w, "Invalid status", http.StatusBadRequest)
+				return
+			}
+			s.logger.Printf("Error calculating next tick: %v", err)
+			http.Error(w, "Error calculating next tick", http.StatusBadRequest)
+			return
+		}
 	}
 
 	if err := s.db.UpdateJob(job); err != nil {

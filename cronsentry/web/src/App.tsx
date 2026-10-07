@@ -1,9 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { JobCard } from './components/JobCard';
+import { JobDetail } from './components/JobDetail';
 import { Stats } from './components/Stats';
 import { NewJobModal } from './components/NewJobModal';
 import { AlertChannels } from './components/AlertChannels';
 import { PlusIcon } from '@heroicons/react/24/outline';
+import type { Job } from './types';
 
 // Empty string means same-origin /api (nginx in Compose, Vite proxy in dev).
 const API_URL = import.meta.env.VITE_API_URL ?? '';
@@ -21,46 +23,49 @@ function apiOrigin() {
   return window.location.origin;
 }
 
-interface Job {
-  id: string;
-  name: string;
-  description: string;
-  schedule: string;
-  status: 'healthy' | 'missing' | 'paused';
-  last_ping: string;
-  next_expect: string;
+async function readError(response: Response, fallback: string) {
+  const text = (await response.text()).trim();
+  return text || fallback;
 }
 
 function App() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modalKey, setModalKey] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [token, setToken] = useState(() => sessionStorage.getItem(TOKEN_KEY) || import.meta.env.VITE_API_TOKEN || '');
   const [tokenDraft, setTokenDraft] = useState(token);
   const [authError, setAuthError] = useState(false);
 
-  useEffect(() => {
-    fetchJobs(token);
-  }, []);
-
-  const fetchJobs = async (activeToken: string) => {
+  const fetchJobs = useCallback(async (activeToken: string) => {
     try {
       const response = await fetch(`${API_URL}/api/jobs`, { headers: authHeaders(activeToken) });
       if (response.status === 401) {
         setAuthError(true);
+        setLoadError(null);
         setJobs([]);
         return;
       }
-      if (!response.ok) throw new Error('Failed to fetch jobs');
+      if (!response.ok) {
+        setLoadError(await readError(response, 'Failed to load jobs'));
+        return;
+      }
       const data = await response.json();
       setAuthError(false);
+      setLoadError(null);
       setJobs(data);
-    } catch (error) {
-      console.error('Error fetching jobs:', error);
+    } catch {
+      setLoadError('Failed to load jobs');
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchJobs(token);
+  }, [fetchJobs, token]);
 
   const saveToken = (event: React.FormEvent) => {
     event.preventDefault();
@@ -68,8 +73,11 @@ function App() {
     sessionStorage.setItem(TOKEN_KEY, next);
     setToken(next);
     setIsLoading(true);
-    fetchJobs(next);
   };
+
+  const onAuthError = useCallback(() => {
+    setAuthError(true);
+  }, []);
 
   const stats = {
     total: jobs.length,
@@ -85,12 +93,14 @@ function App() {
       });
       if (response.status === 401) {
         setAuthError(true);
-        return;
+        return 'The API token was rejected.';
       }
-      if (!response.ok) throw new Error('Failed to delete job');
-      setJobs(jobs.filter(job => job.id !== id));
-    } catch (error) {
-      console.error('Error deleting job:', error);
+      if (!response.ok) return readError(response, 'Failed to delete job');
+      setJobs((current) => current.filter(job => job.id !== id));
+      if (selectedId === id) setSelectedId(null);
+      return null;
+    } catch {
+      return 'Failed to delete job';
     }
   };
 
@@ -103,15 +113,21 @@ function App() {
       });
       if (response.status === 401) {
         setAuthError(true);
-        return;
+        return 'The API token was rejected.';
       }
-      if (!response.ok) throw new Error('Failed to create job');
+      if (!response.ok) return readError(response, 'Failed to create job');
       const job = await response.json();
-      setJobs([...jobs, job]);
+      setJobs((current) => [...current, job]);
       setIsModalOpen(false);
-    } catch (error) {
-      console.error('Error creating job:', error);
+      return null;
+    } catch {
+      return 'Failed to create job';
     }
+  };
+
+  const openModal = () => {
+    setModalKey((current) => current + 1);
+    setIsModalOpen(true);
   };
 
   if (isLoading) {
@@ -134,7 +150,7 @@ function App() {
             </div>
             <div className="flex items-center">
               <button
-                onClick={() => setIsModalOpen(true)}
+                onClick={openModal}
                 className="inline-flex items-center gap-x-2 rounded-md bg-blue-600 px-3.5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
               >
                 <PlusIcon className="-ml-0.5 h-5 w-5" aria-hidden="true" />
@@ -172,39 +188,74 @@ function App() {
               </button>
             </div>
           </form>
-          {token && !authError ? (
-            <AlertChannels apiUrl={API_URL} token={token} />
-          ) : null}
-          <Stats {...stats} />
-          
-          <div className="mt-8">
-            {jobs.length > 0 ? (
-              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
-                {jobs.map(job => (
-                  <JobCard key={job.id} job={job} apiOrigin={apiOrigin()} onDelete={handleDelete} />
-                ))}
+          {selectedId ? (
+            <JobDetail
+              jobId={selectedId}
+              apiUrl={API_URL}
+              token={token}
+              apiOrigin={apiOrigin()}
+              onBack={() => {
+                setSelectedId(null);
+                fetchJobs(token);
+              }}
+              onDelete={handleDelete}
+              onAuthError={onAuthError}
+            />
+          ) : (
+            <>
+              {token && !authError ? (
+                <AlertChannels apiUrl={API_URL} token={token} />
+              ) : null}
+              <Stats {...stats} />
+
+              <div className="mt-8">
+                {loadError ? (
+                  <div className="rounded-lg bg-white p-6 text-center shadow">
+                    <p className="text-sm text-red-600">{loadError}</p>
+                    <button
+                      type="button"
+                      onClick={() => fetchJobs(token)}
+                      className="mt-4 rounded-md bg-gray-900 px-3 py-2 text-sm font-semibold text-white"
+                    >
+                      Retry
+                    </button>
+                  </div>
+                ) : jobs.length > 0 ? (
+                  <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+                    {jobs.map(job => (
+                      <JobCard
+                        key={job.id}
+                        job={job}
+                        apiOrigin={apiOrigin()}
+                        onOpen={setSelectedId}
+                        onDelete={handleDelete}
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center">
+                    <h3 className="mt-2 text-sm font-semibold text-gray-900">No jobs</h3>
+                    <p className="mt-1 text-sm text-gray-500">Get started by creating a new job.</p>
+                    <div className="mt-6">
+                      <button
+                        type="button"
+                        onClick={openModal}
+                        className="inline-flex items-center gap-x-2 rounded-md bg-blue-600 px-3.5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+                      >
+                        <PlusIcon className="-ml-0.5 h-5 w-5" aria-hidden="true" />
+                        New Job
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
-            ) : (
-              <div className="text-center">
-                <h3 className="mt-2 text-sm font-semibold text-gray-900">No jobs</h3>
-                <p className="mt-1 text-sm text-gray-500">Get started by creating a new job.</p>
-                <div className="mt-6">
-                  <button
-                    type="button"
-                    onClick={() => setIsModalOpen(true)}
-                    className="inline-flex items-center gap-x-2 rounded-md bg-blue-600 px-3.5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
-                  >
-                    <PlusIcon className="-ml-0.5 h-5 w-5" aria-hidden="true" />
-                    New Job
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
+            </>
+          )}
         </div>
       </main>
 
       <NewJobModal
+        key={modalKey}
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         onSubmit={handleCreateJob}

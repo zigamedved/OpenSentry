@@ -271,6 +271,40 @@ func (d *Database) GetDB() *sql.DB {
 	return d.db
 }
 
+func (d *Database) ListJobEvents(jobID string, limit int) ([]*models.JobEvent, error) {
+	if limit < 1 {
+		limit = 50
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	rows, err := d.db.Query(`
+		SELECT id, job_id, type, data::text, created_at
+		FROM job_events
+		WHERE job_id = $1
+		ORDER BY created_at DESC, id DESC
+		LIMIT $2
+	`, jobID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("error querying job events: %w", err)
+	}
+	defer rows.Close()
+
+	events := make([]*models.JobEvent, 0)
+	for rows.Next() {
+		var event models.JobEvent
+		if err := rows.Scan(&event.ID, &event.JobID, &event.Type, &event.Data, &event.CreatedAt); err != nil {
+			return nil, fmt.Errorf("error scanning job event: %w", err)
+		}
+		events = append(events, &event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating job events: %w", err)
+	}
+	return events, nil
+}
+
 func (d *Database) DeleteJob(id string) error {
 	query := `DELETE FROM jobs WHERE id = $1`
 	result, err := d.db.Exec(query, id)
