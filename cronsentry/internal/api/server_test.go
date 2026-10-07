@@ -204,4 +204,14 @@ func TestApplyStatusChange(t *testing.T) {
 			t.Fatalf("status changed to %s", job.Status)
 		}
 	})
+
+	t.Run("client cannot force missing", func(t *testing.T) {
+		job := &models.Job{Status: models.StatusHealthy, Schedule: "0 0 * * *"}
+		if err := applyStatusChange(job, string(models.StatusMissing)); err == nil {
+			t.Fatal("expected error for missing status")
+		}
+		if job.Status != models.StatusHealthy {
+			t.Fatalf("status = %s", job.Status)
+		}
+	})
 }

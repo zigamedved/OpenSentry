@@ -313,6 +313,69 @@ func TestJobDetailEventsPauseAndEdit(t *testing.T) {
 	if badGrace.StatusCode != http.StatusBadRequest || strings.TrimSpace(badGrace.Body) != "Grace time must be positive" {
 		t.Fatalf("bad grace = %d %q", badGrace.StatusCode, badGrace.Body)
 	}
+
+	forced := do(t, srv, http.MethodPut, "/api/jobs/"+job.ID, `{"status":"missing"}`)
+	if forced.StatusCode != http.StatusBadRequest || strings.TrimSpace(forced.Body) != "Invalid status" {
+		t.Fatalf("force missing = %d %q", forced.StatusCode, forced.Body)
+	}
+	if decodeJob(t, do(t, srv, http.MethodGet, "/api/jobs/"+job.ID, "").Body).Status != models.StatusHealthy {
+		t.Fatal("client marked the job missing")
+	}
+}
+
+func TestOtherUsersJobLooksMissing(t *testing.T) {
+	srv := newBehaviorServer(t)
+	database, err := db.NewDatabase()
+	if err != nil {
+		t.Fatalf("connect test database: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	if _, err := database.GetDB().Exec(`
+		INSERT INTO users (id, email, name, password_hash, created_at, updated_at)
+		VALUES ('other-user', 'other@example.com', 'Other', 'x', NOW(), NOW())
+		ON CONFLICT (id) DO NOTHING
+	`); err != nil {
+		t.Fatalf("insert user: %v", err)
+	}
+	other := &models.Job{
+		Name:       "Someone else",
+		Schedule:   "0 0 * * *",
+		GraceTime:  5,
+		Status:     models.StatusHealthy,
+		LastPing:   time.Now().UTC(),
+		NextExpect: time.Now().UTC().Add(time.Hour),
+		UserID:     "other-user",
+	}
+	if err := database.CreateJob(other); err != nil {
+		t.Fatalf("create other job: %v", err)
+	}
+
+	for _, tc := range []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{http.MethodGet, "/api/jobs/" + other.ID, ""},
+		{http.MethodGet, "/api/jobs/" + other.ID + "/events", ""},
+		{http.MethodPut, "/api/jobs/" + other.ID, `{"name":"taken"}`},
+		{http.MethodDelete, "/api/jobs/" + other.ID, ""},
+	} {
+		resp := do(t, srv, tc.method, tc.path, tc.body)
+		if resp.StatusCode != http.StatusNotFound || strings.TrimSpace(resp.Body) != "Job not found" {
+			t.Fatalf("%s %s = %d %q", tc.method, tc.path, resp.StatusCode, resp.Body)
+		}
+	}
+
+	stillThere, err := database.GetJob(other.ID)
+	if err != nil || stillThere == nil || stillThere.Name != "Someone else" {
+		t.Fatalf("other job changed: %+v %v", stillThere, err)
+	}
+
+	pinged := do(t, srv, http.MethodPost, "/api/ping/"+other.ID, "")
+	if pinged.StatusCode != http.StatusOK || pinged.Body != `{"status":"ok"}` {
+		t.Fatalf("ping other job = %d %q", pinged.StatusCode, pinged.Body)
+	}
 }
 
 func decodeEvents(t *testing.T, body string) []models.JobEvent {

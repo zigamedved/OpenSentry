@@ -217,7 +217,7 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 		Status:      models.StatusHealthy,
 		LastPing:    time.Now().UTC(),
 		NextExpect:  nextTick,
-		UserID:      "test-user", // hardcoded for now, should come from auth
+		UserID:      demoUserID, // hardcoded for now, should come from auth
 		CreatedAt:   time.Now().UTC(),
 		UpdatedAt:   time.Now().UTC(),
 	}
@@ -234,9 +234,7 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
-	userID := "test-user" // TODO: get user ID from auth
-
-	jobs, err := s.db.ListJobsByUser(userID)
+	jobs, err := s.db.ListJobsByUser(demoUserID)
 	if err != nil {
 		s.logger.Printf("Error listing jobs: %v", err)
 		http.Error(w, "Failed to list jobs", http.StatusInternalServerError)
@@ -259,25 +257,27 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := s.db.GetJob(id)
-	if err != nil {
-		s.logger.Printf("Error getting job: %v", err)
-		http.Error(w, "Failed to get job", http.StatusInternalServerError)
-		return
-	}
-
-	if job == nil {
-		http.Error(w, "Job not found", http.StatusNotFound)
-		return
-	}
-
-	if job.UserID != "test-user" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	job, ok := s.ownedJob(w, id)
+	if !ok {
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(job)
+}
+
+func (s *Server) ownedJob(w http.ResponseWriter, id string) (*models.Job, bool) {
+	job, err := s.db.GetJobForUser(id, demoUserID)
+	if err != nil {
+		s.logger.Printf("Error getting job: %v", err)
+		http.Error(w, "Failed to get job", http.StatusInternalServerError)
+		return nil, false
+	}
+	if job == nil {
+		http.Error(w, "Job not found", http.StatusNotFound)
+		return nil, false
+	}
+	return job, true
 }
 
 func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
@@ -287,18 +287,7 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := s.db.GetJob(id)
-	if err != nil {
-		s.logger.Printf("Error getting job: %v", err)
-		http.Error(w, "Failed to get job", http.StatusInternalServerError)
-		return
-	}
-	if job == nil {
-		http.Error(w, "Job not found", http.StatusNotFound)
-		return
-	}
-	if job.UserID != demoUserID {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	if _, ok := s.ownedJob(w, id); !ok {
 		return
 	}
 
@@ -312,7 +301,7 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 		limit = parsed
 	}
 
-	events, err := s.db.ListJobEvents(id, limit)
+	events, err := s.db.ListJobEvents(id, demoUserID, limit)
 	if err != nil {
 		s.logger.Printf("Error listing job events: %v", err)
 		http.Error(w, "Failed to list job events", http.StatusInternalServerError)
@@ -341,7 +330,7 @@ var errInvalidStatus = errors.New("invalid status")
 func applyStatusChange(job *models.Job, status string) error {
 	next := models.JobStatus(status)
 	switch next {
-	case models.StatusHealthy, models.StatusMissing, models.StatusPaused:
+	case models.StatusHealthy, models.StatusPaused:
 	default:
 		return errInvalidStatus
 	}
@@ -381,23 +370,14 @@ func (s *Server) handleUpdateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := s.db.GetJob(id)
-	if err != nil {
-		s.logger.Printf("Error getting job: %v", err)
-		http.Error(w, "Failed to get job", http.StatusInternalServerError)
+	job, ok := s.ownedJob(w, id)
+	if !ok {
 		return
 	}
 
-	if job == nil {
-		http.Error(w, "Job not found", http.StatusNotFound)
-		return
-	}
-
-	if job.UserID != "test-user" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
+	// Pointers distinguish an omitted field from a present one. Pause can send
+	// only {"status":"paused"} without clearing name or description, and a
+	// present empty description still clears it.
 	var jobRequest struct {
 		Name        *string `json:"name"`
 		Description *string `json:"description"`
@@ -421,7 +401,7 @@ func (s *Server) handleUpdateJob(w http.ResponseWriter, r *http.Request) {
 	}
 	if jobRequest.Status != nil && *jobRequest.Status != "" {
 		switch models.JobStatus(*jobRequest.Status) {
-		case models.StatusHealthy, models.StatusMissing, models.StatusPaused:
+		case models.StatusHealthy, models.StatusPaused:
 		default:
 			http.Error(w, "Invalid status", http.StatusBadRequest)
 			return
@@ -521,24 +501,11 @@ func (s *Server) handleDeleteJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := s.db.GetJob(id)
-	if err != nil {
-		s.logger.Printf("Error getting job: %v", err)
-		http.Error(w, "Failed to get job", http.StatusInternalServerError)
+	if _, ok := s.ownedJob(w, id); !ok {
 		return
 	}
 
-	if job == nil {
-		http.Error(w, "Job not found", http.StatusNotFound)
-		return
-	}
-
-	if job.UserID != "test-user" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	if err := s.db.DeleteJob(id); err != nil {
+	if err := s.db.DeleteJob(id, demoUserID); err != nil {
 		s.logger.Printf("Error deleting job: %v", err)
 		http.Error(w, "Failed to delete job", http.StatusInternalServerError)
 		return

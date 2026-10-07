@@ -63,29 +63,36 @@ func (d *Database) Close() error {
 	return d.db.Close()
 }
 
-func (d *Database) GetJob(id string) (*models.Job, error) {
-	query := `
-		SELECT id, name, description, schedule, grace_time, 
-		       last_ping, next_expect, status, user_id, created_at, updated_at
-		FROM jobs
-		WHERE id = $1
-	`
-
+func (d *Database) scanJob(row *sql.Row) (*models.Job, error) {
 	var job models.Job
-	err := d.db.QueryRow(query, id).Scan(
+	err := row.Scan(
 		&job.ID, &job.Name, &job.Description, &job.Schedule,
 		&job.GraceTime, &job.LastPing, &job.NextExpect,
 		&job.Status, &job.UserID, &job.CreatedAt, &job.UpdatedAt,
 	)
-
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("error querying job: %w", err)
 	}
-
 	return &job, nil
+}
+
+const jobSelect = `
+	SELECT id, name, description, schedule, grace_time,
+	       last_ping, next_expect, status, user_id, created_at, updated_at
+	FROM jobs
+`
+
+func (d *Database) GetJob(id string) (*models.Job, error) {
+	return d.scanJob(d.db.QueryRow(jobSelect+` WHERE id = $1`, id))
+}
+
+// GetJobForUser returns the job only when it belongs to userID.
+// A missing row and a job owned by someone else both come back as (nil, nil).
+func (d *Database) GetJobForUser(id, userID string) (*models.Job, error) {
+	return d.scanJob(d.db.QueryRow(jobSelect+` WHERE id = $1 AND user_id = $2`, id, userID))
 }
 
 func (d *Database) ListJobsByUser(userID string) ([]*models.Job, error) {
@@ -271,7 +278,7 @@ func (d *Database) GetDB() *sql.DB {
 	return d.db
 }
 
-func (d *Database) ListJobEvents(jobID string, limit int) ([]*models.JobEvent, error) {
+func (d *Database) ListJobEvents(jobID, userID string, limit int) ([]*models.JobEvent, error) {
 	if limit < 1 {
 		limit = 50
 	}
@@ -280,12 +287,13 @@ func (d *Database) ListJobEvents(jobID string, limit int) ([]*models.JobEvent, e
 	}
 
 	rows, err := d.db.Query(`
-		SELECT id, job_id, type, data::text, created_at
-		FROM job_events
-		WHERE job_id = $1
-		ORDER BY created_at DESC, id DESC
-		LIMIT $2
-	`, jobID, limit)
+		SELECT e.id, e.job_id, e.type, e.data::text, e.created_at
+		FROM job_events e
+		JOIN jobs j ON j.id = e.job_id
+		WHERE e.job_id = $1 AND j.user_id = $2
+		ORDER BY e.created_at DESC, e.id DESC
+		LIMIT $3
+	`, jobID, userID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("error querying job events: %w", err)
 	}
@@ -305,9 +313,9 @@ func (d *Database) ListJobEvents(jobID string, limit int) ([]*models.JobEvent, e
 	return events, nil
 }
 
-func (d *Database) DeleteJob(id string) error {
-	query := `DELETE FROM jobs WHERE id = $1`
-	result, err := d.db.Exec(query, id)
+func (d *Database) DeleteJob(id, userID string) error {
+	query := `DELETE FROM jobs WHERE id = $1 AND user_id = $2`
+	result, err := d.db.Exec(query, id, userID)
 	if err != nil {
 		return fmt.Errorf("error deleting job: %w", err)
 	}
