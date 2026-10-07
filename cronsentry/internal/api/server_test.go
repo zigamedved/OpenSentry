@@ -2,13 +2,101 @@ package api
 
 import (
 	"errors"
+	"io"
+	"log"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/zigamedved/OpenSentry/internal/db"
 	"github.com/zigamedved/OpenSentry/internal/models"
 )
+
+func TestManagementAuth(t *testing.T) {
+	s := &Server{apiToken: "secret-token", logger: log.New(io.Discard, "", 0)}
+	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	handler := s.authMiddleware(ok)
+
+	t.Run("missing token is 401", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/jobs", nil)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401", rr.Code)
+		}
+	})
+
+	t.Run("wrong token is 401", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/jobs", nil)
+		req.Header.Set("Authorization", "Bearer other")
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401", rr.Code)
+		}
+	})
+
+	t.Run("bearer token allows management", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodDelete, "/api/jobs/abc", nil)
+		req.Header.Set("Authorization", "Bearer secret-token")
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusNoContent {
+			t.Fatalf("status = %d, want 204", rr.Code)
+		}
+	})
+
+	t.Run("x-api-token header allows management", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/jobs/abc", nil)
+		req.Header.Set("X-API-Token", "secret-token")
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusNoContent {
+			t.Fatalf("status = %d, want 204", rr.Code)
+		}
+	})
+
+	t.Run("unset server token rejects even a presented token", func(t *testing.T) {
+		open := &Server{logger: log.New(io.Discard, "", 0)}
+		req := httptest.NewRequest(http.MethodGet, "/api/jobs", nil)
+		req.Header.Set("Authorization", "Bearer secret-token")
+		rr := httptest.NewRecorder()
+		open.authMiddleware(ok).ServeHTTP(rr, req)
+		if rr.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401", rr.Code)
+		}
+	})
+
+	t.Run("ping stays public", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/ping/job-id", nil)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusNoContent {
+			t.Fatalf("status = %d, want 204", rr.Code)
+		}
+	})
+
+	t.Run("channels require auth", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPut, "/api/channels/slack", nil)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401", rr.Code)
+		}
+	})
+
+	t.Run("healthz stays public", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusNoContent {
+			t.Fatalf("status = %d, want 204", rr.Code)
+		}
+	})
+}
 
 func TestPingHTTPStatus(t *testing.T) {
 	if got := pingHTTPStatus(db.ErrJobNotFound); got != http.StatusNotFound {

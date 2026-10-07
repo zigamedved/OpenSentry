@@ -7,8 +7,10 @@ import (
 	"log"
 	"strings"
 	"testing"
+	"time"
 
 	_ "github.com/lib/pq"
+	"github.com/zigamedved/OpenSentry/internal/notifications/integrations"
 )
 
 type stubEmailSender struct {
@@ -38,9 +40,9 @@ func unreachableDB(t *testing.T) *sql.DB {
 
 func TestSendEmailNotification_PropagatesSenderError(t *testing.T) {
 	sender := &stubEmailSender{err: errors.New("sendgrid 401")}
-	np := NewNotificationProcessor(unreachableDB(t), sender, log.New(io.Discard, "", 0))
+	np := NewNotificationProcessor(unreachableDB(t), sender, log.New(io.Discard, "", 0), "https://monitor.example")
 
-	err := np.sendEmailNotification("n1", "a@b.c", "job", "missed")
+	err := np.sendEmailNotification("n1", "a@b.c", "job", "missed", time.Now().UTC())
 	if err == nil {
 		t.Fatal("expected error when email send fails")
 	}
@@ -54,9 +56,9 @@ func TestSendEmailNotification_PropagatesSenderError(t *testing.T) {
 
 func TestSendEmailNotification_SuccessPathStillErrorsWithoutWorkingDB(t *testing.T) {
 	sender := &stubEmailSender{err: nil}
-	np := NewNotificationProcessor(unreachableDB(t), sender, log.New(io.Discard, "", 0))
+	np := NewNotificationProcessor(unreachableDB(t), sender, log.New(io.Discard, "", 0), "")
 
-	err := np.sendEmailNotification("n1", "a@b.c", "job", "missed")
+	err := np.sendEmailNotification("n1", "a@b.c", "job", "missed", time.Now().UTC())
 	if err == nil {
 		t.Fatal("expected error marking sent against unreachable DB")
 	}
@@ -65,5 +67,57 @@ func TestSendEmailNotification_SuccessPathStillErrorsWithoutWorkingDB(t *testing
 	}
 	if sender.calls != 1 {
 		t.Fatalf("SendEmail calls = %d, want 1", sender.calls)
+	}
+}
+
+func TestSendEmailNotification_DryRunMarksSkipped(t *testing.T) {
+	sender := &stubEmailSender{err: integrations.ErrEmailDryRun}
+	np := NewNotificationProcessor(unreachableDB(t), sender, log.New(io.Discard, "", 0), "")
+
+	err := np.sendEmailNotification("n1", "a@b.c", "job", "missed", time.Now().UTC())
+	if err == nil || !strings.Contains(err.Error(), "skipped") {
+		t.Fatalf("expected skipped-status error against unreachable DB, got %v", err)
+	}
+}
+
+func TestWebhookURLFromData(t *testing.T) {
+	if got := webhookURLFromData([]byte(`{"webhook_url":"https://hooks.example/a"}`)); got != "https://hooks.example/a" {
+		t.Fatalf("url = %q", got)
+	}
+	if got := webhookURLFromData([]byte(`{}`)); got != "" {
+		t.Fatalf("empty data url = %q", got)
+	}
+}
+
+func TestSendWebhookNotification_MissingURLTriesToRecordFailure(t *testing.T) {
+	np := NewNotificationProcessor(unreachableDB(t), &stubEmailSender{}, log.New(io.Discard, "", 0), "")
+	err := np.sendWebhookNotification("n1", "slack", "Nightly backup", "missed", time.Now().UTC(), []byte(`{}`))
+	if err == nil || !strings.Contains(err.Error(), "marking notification as failed") {
+		t.Fatalf("expected recorded failure, got %v", err)
+	}
+}
+
+func TestAlertEmailIncludesJobMissAndDashboard(t *testing.T) {
+	missed := time.Date(2026, 10, 6, 9, 0, 0, 0, time.UTC)
+	subject, body := alertEmail("Nightly backup", "Job missed its schedule", missed, "https://monitor.example/dashboard")
+	if !strings.Contains(subject, "Nightly backup") {
+		t.Fatalf("subject = %q", subject)
+	}
+	if !strings.Contains(body, "Nightly backup") || !strings.Contains(body, "Job missed its schedule") {
+		t.Fatalf("body missing job details: %s", body)
+	}
+	if !strings.Contains(body, missed.Format(time.RFC1123)) {
+		t.Fatalf("body missing miss time: %s", body)
+	}
+	if !strings.Contains(body, "https://monitor.example/dashboard") {
+		t.Fatalf("body missing dashboard link: %s", body)
+	}
+
+	_, plain := alertEmail("Backup", "missed", missed, "")
+	if strings.Contains(plain, "href=") {
+		t.Fatal("empty dashboard URL should not emit a link")
+	}
+	if !strings.Contains(plain, "Open your OpenSentry dashboard") {
+		t.Fatalf("plain body = %s", plain)
 	}
 }

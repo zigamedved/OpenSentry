@@ -14,9 +14,12 @@ Create a database that matches the API defaults:
 
 ```bash
 cd cronsentry
+export API_TOKEN="$(openssl rand -hex 32)"
 go test ./...
 go run ./cmd
 ```
+
+Paste `API_TOKEN` into the dashboard. Without it, `/api/jobs` returns 401. Ping URLs stay public.
 
 In another shell:
 

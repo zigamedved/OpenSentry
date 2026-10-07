@@ -12,8 +12,14 @@ services:
       - DB_PASSWORD=postgres
       - DB_NAME=cronsentry
       - DB_SSLMODE=disable
-      # Optional. Unset keeps email in dry-run mode (logged, not sent).
+      # Required for the dashboard. Leave unset to fail closed (401). Do not bake a default.
+      - API_TOKEN=${API_TOKEN:-}
+      # Optional. Unset keeps email in dry-run (logged, status skipped, not sent).
       - SENDGRID_API_KEY=${SENDGRID_API_KEY:-}
+      - EMAIL_FROM=${EMAIL_FROM:-}
+      - DASHBOARD_URL=${DASHBOARD_URL:-http://localhost:3000}
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
+      - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-}
     restart: unless-stopped
 
   db:

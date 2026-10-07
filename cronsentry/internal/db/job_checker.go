@@ -129,17 +129,9 @@ func (jc *JobChecker) markJobMissing(jobID, jobName, userID string) error {
 		return fmt.Errorf("error creating event: %w", err)
 	}
 
-	notificationID := uuid.New().String()
-	message := fmt.Sprintf("Job '%s' has missed its scheduled run time", jobName)
-
-	_, err = tx.Exec(`
-		INSERT INTO notifications (id, user_id, job_id, message, type, status, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`, notificationID, userID, jobID, message, "email", "pending", now)
-
-	if err != nil {
+	if err = enqueueAlerts(tx, userID, jobID, jobName, "miss", now); err != nil {
 		tx.Rollback()
-		return fmt.Errorf("error creating notification: %w", err)
+		return err
 	}
 
 	err = tx.Commit()

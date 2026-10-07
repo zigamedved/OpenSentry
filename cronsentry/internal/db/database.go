@@ -245,6 +245,13 @@ func (d *Database) RecordPing(jobID string) error {
 		return fmt.Errorf("error creating event record: %w", err)
 	}
 
+	if eventType == "recovery" {
+		if err = enqueueAlerts(tx, job.UserID, job.ID, job.Name, "recovery", now); err != nil {
+			tx.Rollback()
+			return err
+		}
+	}
+
 	err = tx.Commit()
 	if err != nil {
 		return fmt.Errorf("error committing transaction: %w", err)

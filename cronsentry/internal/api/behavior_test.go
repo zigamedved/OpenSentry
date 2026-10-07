@@ -216,7 +216,7 @@ func newBehaviorServer(t *testing.T) *httptest.Server {
 		t.Fatalf("truncate jobs: %v", err)
 	}
 
-	srv := httptest.NewServer(NewServer(database, log.New(io.Discard, "", 0)).Router())
+	srv := httptest.NewServer(NewServer(database, log.New(io.Discard, "", 0), behaviorAPIToken).Router())
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -250,6 +250,7 @@ func do(t *testing.T, srv *httptest.Server, method, path, body string) recorded 
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	req.Header.Set("Authorization", "Bearer "+behaviorAPIToken)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -279,6 +280,8 @@ func decodeJobs(t *testing.T, body string) []models.Job {
 	}
 	return jobs
 }
+
+const behaviorAPIToken = "behavior-test-token"
 
 func envOr(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {
