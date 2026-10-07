@@ -80,6 +80,23 @@ func TestSendEmailNotification_DryRunMarksSkipped(t *testing.T) {
 	}
 }
 
+func TestWebhookURLFromData(t *testing.T) {
+	if got := webhookURLFromData([]byte(`{"webhook_url":"https://hooks.example/a"}`)); got != "https://hooks.example/a" {
+		t.Fatalf("url = %q", got)
+	}
+	if got := webhookURLFromData([]byte(`{}`)); got != "" {
+		t.Fatalf("empty data url = %q", got)
+	}
+}
+
+func TestSendWebhookNotification_MissingURLTriesToRecordFailure(t *testing.T) {
+	np := NewNotificationProcessor(unreachableDB(t), &stubEmailSender{}, log.New(io.Discard, "", 0), "")
+	err := np.sendWebhookNotification("n1", "slack", "Nightly backup", "missed", time.Now().UTC(), []byte(`{}`))
+	if err == nil || !strings.Contains(err.Error(), "marking notification as failed") {
+		t.Fatalf("expected recorded failure, got %v", err)
+	}
+}
+
 func TestAlertEmailIncludesJobMissAndDashboard(t *testing.T) {
 	missed := time.Date(2026, 10, 6, 9, 0, 0, 0, time.UTC)
 	subject, body := alertEmail("Nightly backup", "Job missed its schedule", missed, "https://monitor.example/dashboard")

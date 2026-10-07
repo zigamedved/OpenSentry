@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { JobCard } from './components/JobCard';
 import { Stats } from './components/Stats';
 import { NewJobModal } from './components/NewJobModal';
+import { AlertChannels } from './components/AlertChannels';
 import { PlusIcon } from '@heroicons/react/24/outline';
 
 // Empty string means same-origin /api (nginx in Compose, Vite proxy in dev).
@@ -171,6 +172,9 @@ function App() {
               </button>
             </div>
           </form>
+          {token && !authError ? (
+            <AlertChannels apiUrl={API_URL} token={token} />
+          ) : null}
           <Stats {...stats} />
           
           <div className="mt-8">

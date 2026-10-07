@@ -18,6 +18,8 @@ services:
       - SENDGRID_API_KEY=${SENDGRID_API_KEY:-}
       - EMAIL_FROM=${EMAIL_FROM:-}
       - DASHBOARD_URL=${DASHBOARD_URL:-http://localhost:3000}
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
+      - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-}
     restart: unless-stopped
 
   db:

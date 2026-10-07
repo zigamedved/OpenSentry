@@ -14,7 +14,7 @@ The Go module and Docker app live in [`cronsentry/`](cronsentry/). That director
 - **Flexible Alert Thresholds**: Set custom grace periods for each job
 - **Email Notifications**: Get notified when jobs fail to run (SendGrid when configured; otherwise dry-run)
 - **Status Dashboard**: View the health of all your jobs in one place
-- **Extensible**: Easy to add Slack, Discord, or other notification methods // In progress
+- **Slack and Discord**: Incoming webhooks for miss and recovery alerts
 - **Authentication**: Authentication via TBD // In progress
 
 ## Dashboard
@@ -119,11 +119,33 @@ The API reads these environment variables. Compose sets the database values show
 | `API_TOKEN` | unset | Bearer token for `/api/jobs`. When unset, those routes return 401. `POST /api/ping/{id}` stays public. |
 | `SENDGRID_API_KEY` | unset | When set, missing-job email is sent through SendGrid. When unset, the API logs `would send` and marks the notification `skipped`. |
 | `EMAIL_FROM` | `OpenSentry <noreply@localhost>` | SendGrid from address. Use a verified sender, for example `OpenSentry <alerts@yourdomain>`. |
-| `DASHBOARD_URL` | unset | Link included in alert email. Compose defaults this to `http://localhost:3000`. |
+| `DASHBOARD_URL` | unset | Link included in alerts. Compose defaults this to `http://localhost:3000`. |
+| `SLACK_WEBHOOK_URL` | unset | Slack incoming webhook for the self-host user. Saved on startup when set. |
+| `DISCORD_WEBHOOK_URL` | unset | Discord webhook for the self-host user. Saved on startup when set. |
 
 `GET /healthz` returns 200 when the API can ping Postgres. It does not require `API_TOKEN`.
 
 Compose does not configure an email provider. A missing `SENDGRID_API_KEY` is safe: alerts are logged and marked skipped, not failed. Create a SendGrid API key, verify the `EMAIL_FROM` sender, and set `SENDGRID_API_KEY` when you want real mail.
+
+## Slack and Discord
+
+Miss and recovery alerts go to every channel configured for the user: email, plus Slack and Discord when a webhook is saved. A delivery failure is stored on that notification and does not stop the checker or the other channels.
+
+You can paste the webhook in the dashboard (Alert channels) or set `SLACK_WEBHOOK_URL` / `DISCORD_WEBHOOK_URL`. An empty env var does not erase a URL saved in the dashboard. `PUT /api/channels/slack` or `PUT /api/channels/discord` with `{"webhook_url":""}` clears a channel. These routes require `API_TOKEN`.
+
+Create a Slack incoming webhook in your workspace's app settings, or a Discord channel webhook (Integrations → Webhooks → New Webhook). OpenSentry posts JSON:
+
+Slack:
+
+```json
+{"text":"OpenSentry: Job 'Nightly backup' has missed its scheduled run time\nJob: Nightly backup\nWhen: Tue, 07 Oct 2026 12:00:00 UTC\nDashboard: https://monitor.example"}
+```
+
+Discord:
+
+```json
+{"content":"OpenSentry: Job 'Nightly backup' has missed its scheduled run time\nJob: Nightly backup\nWhen: Tue, 07 Oct 2026 12:00:00 UTC\nDashboard: https://monitor.example"}
+```
 
 ## License
 

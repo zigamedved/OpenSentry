@@ -29,6 +29,10 @@ func main() {
 	}
 	logger.Println("Database initialized successfully")
 
+	if err := database.SyncEnvAlertChannels("test-user", os.Getenv("SLACK_WEBHOOK_URL"), os.Getenv("DISCORD_WEBHOOK_URL")); err != nil {
+		logger.Fatalf("Failed to store alert channel env: %v", err)
+	}
+
 	apiKey := os.Getenv("SENDGRID_API_KEY")
 	enabled := apiKey != ""
 	if !enabled {

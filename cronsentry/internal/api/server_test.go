@@ -79,6 +79,15 @@ func TestManagementAuth(t *testing.T) {
 		}
 	})
 
+	t.Run("channels require auth", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPut, "/api/channels/slack", nil)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401", rr.Code)
+		}
+	})
+
 	t.Run("healthz stays public", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 		rr := httptest.NewRecorder()

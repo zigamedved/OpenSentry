@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/zigamedved/OpenSentry/internal/db"
 	"github.com/zigamedved/OpenSentry/internal/models"
+	"github.com/zigamedved/OpenSentry/internal/notifications/integrations"
 )
 
 type Server struct {
@@ -38,6 +39,8 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("PUT /api/jobs/{id}", s.handleUpdateJob)
 	mux.HandleFunc("DELETE /api/jobs/{id}", s.handleDeleteJob)
 	mux.HandleFunc("POST /api/ping/{id}", s.handlePing)
+	mux.HandleFunc("GET /api/channels", s.handleListChannels)
+	mux.HandleFunc("PUT /api/channels/{kind}", s.handlePutChannel)
 	return s.corsMiddleware(s.loggingMiddleware(s.recoveryMiddleware(s.authMiddleware(mux))))
 }
 
@@ -50,7 +53,64 @@ func managementPath(method, path string) bool {
 	if path == "/healthz" || strings.HasPrefix(path, "/api/ping/") {
 		return false
 	}
-	return strings.HasPrefix(path, "/api/jobs")
+	return strings.HasPrefix(path, "/api/")
+}
+
+const demoUserID = "test-user"
+
+func (s *Server) handleListChannels(w http.ResponseWriter, r *http.Request) {
+	channels, err := s.db.ListAlertChannels(demoUserID)
+	if err != nil {
+		s.logger.Printf("Error listing alert channels: %v", err)
+		http.Error(w, "Failed to list alert channels", http.StatusInternalServerError)
+		return
+	}
+	response := map[string]string{"slack": "", "discord": ""}
+	for _, channel := range channels {
+		if channel.Kind == "slack" || channel.Kind == "discord" {
+			response[channel.Kind] = channel.WebhookURL
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func (s *Server) handlePutChannel(w http.ResponseWriter, r *http.Request) {
+	kind := r.PathValue("kind")
+	if kind != "slack" && kind != "discord" {
+		http.Error(w, "channel must be slack or discord", http.StatusBadRequest)
+		return
+	}
+
+	var body struct {
+		WebhookURL string `json:"webhook_url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	webhookURL := strings.TrimSpace(body.WebhookURL)
+	if webhookURL == "" {
+		if err := s.db.DeleteAlertChannel(demoUserID, kind); err != nil {
+			s.logger.Printf("Error clearing %s channel: %v", kind, err)
+			http.Error(w, "Failed to clear alert channel", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err := integrations.ValidateWebhookURL(webhookURL); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.db.UpsertAlertChannel(demoUserID, kind, webhookURL); err != nil {
+		s.logger.Printf("Error saving %s channel: %v", kind, err)
+		http.Error(w, "Failed to save alert channel", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"kind": kind, "webhook_url": webhookURL})
 }
 
 func bearerToken(r *http.Request) string {

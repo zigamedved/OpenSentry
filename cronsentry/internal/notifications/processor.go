@@ -2,6 +2,7 @@ package notifications
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
@@ -16,6 +17,7 @@ type NotificationProcessor struct {
 	emailSender  EmailSender
 	logger       *log.Logger
 	dashboardURL string
+	webhooks     integrations.WebhookClient
 	done         chan struct{}
 }
 
@@ -53,7 +55,7 @@ func (np *NotificationProcessor) Stop() {
 
 func (np *NotificationProcessor) processNotifications() error {
 	query := `
-		SELECT n.id, n.message, n.type, n.created_at, u.email, j.name
+		SELECT n.id, n.message, n.type, n.data, n.created_at, u.email, j.name
 		FROM notifications n
 		JOIN users u ON n.user_id = u.id
 		JOIN jobs j ON n.job_id = j.id
@@ -72,6 +74,7 @@ func (np *NotificationProcessor) processNotifications() error {
 			ID        string
 			Message   string
 			Type      string
+			Data      []byte
 			CreatedAt time.Time
 			Email     string
 			JobName   string
@@ -81,6 +84,7 @@ func (np *NotificationProcessor) processNotifications() error {
 			&notification.ID,
 			&notification.Message,
 			&notification.Type,
+			&notification.Data,
 			&notification.CreatedAt,
 			&notification.Email,
 			&notification.JobName,
@@ -89,9 +93,13 @@ func (np *NotificationProcessor) processNotifications() error {
 		}
 
 		var processErr error
-		if notification.Type == "email" {
+		switch notification.Type {
+		case "email":
 			processErr = np.sendEmailNotification(notification.ID, notification.Email, notification.JobName, notification.Message, notification.CreatedAt)
-		} else {
+		case "slack", "discord":
+			// A failed webhook is recorded and the loop continues with the next row.
+			processErr = np.sendWebhookNotification(notification.ID, notification.Type, notification.JobName, notification.Message, notification.CreatedAt, notification.Data)
+		default:
 			np.logger.Printf("Unsupported notification type: %s", notification.Type)
 			processErr = np.markNotificationFailed(notification.ID, fmt.Sprintf("Unsupported type: %s", notification.Type))
 		}
@@ -151,6 +159,50 @@ func (np *NotificationProcessor) sendEmailNotification(id, email, jobName, messa
 		return fmt.Errorf("error marking notification as sent: %w", err)
 	}
 
+	return nil
+}
+
+func webhookURLFromData(raw []byte) string {
+	var payload struct {
+		WebhookURL string `json:"webhook_url"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return ""
+	}
+	return payload.WebhookURL
+}
+
+func (np *NotificationProcessor) sendWebhookNotification(id, kind, jobName, message string, occurred time.Time, data []byte) error {
+	webhookURL := webhookURLFromData(data)
+	if webhookURL == "" {
+		if markErr := np.markNotificationFailed(id, "missing webhook url"); markErr != nil {
+			return fmt.Errorf("error marking notification as failed: %w", markErr)
+		}
+		return fmt.Errorf("missing webhook url")
+	}
+
+	text := integrations.AlertText(jobName, message, occurred, np.dashboardURL)
+	var payload []byte
+	var err error
+	switch kind {
+	case "discord":
+		payload, err = integrations.DiscordPayload(text)
+	default:
+		payload, err = integrations.SlackPayload(text)
+	}
+	if err != nil {
+		return fmt.Errorf("error encoding %s payload: %w", kind, err)
+	}
+
+	if err := np.webhooks.Post(webhookURL, payload); err != nil {
+		if markErr := np.markNotificationFailed(id, err.Error()); markErr != nil {
+			np.logger.Printf("Error marking notification as failed: %v", markErr)
+		}
+		return fmt.Errorf("error sending %s notification: %w", kind, err)
+	}
+	if err := np.markNotificationSent(id); err != nil {
+		return fmt.Errorf("error marking notification as sent: %w", err)
+	}
 	return nil
 }
 
