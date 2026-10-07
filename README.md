@@ -49,8 +49,11 @@ This design is lightweight and effective because it requires no agent installati
 
 ### Create a Job
 
+Management routes require `API_TOKEN`. Ping routes do not.
+
 ```bash
 curl -X POST http://localhost:8080/api/jobs \
+  -H "Authorization: Bearer $API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Database Backup",
@@ -79,21 +82,16 @@ curl -X POST http://localhost:8080/api/ping/YOUR_JOB_ID
    cd OpenSentry/cronsentry
    ```
 
-2. Start the application:
+2. Generate a management token and start the application. There is no default token:
 
    ```
+   export API_TOKEN="$(openssl rand -hex 32)"
    docker compose up -d --build
    ```
 
-3. Open the dashboard at http://localhost:3000. The API listens on http://localhost:8080.
+3. Open the dashboard at http://localhost:3000 (the API listens on http://localhost:8080) and paste `API_TOKEN` into the token field. Each job card shows a copyable `POST` curl. The job id in that URL is a secret.
 
-4. Create a job from the dashboard or the API, then copy its id into a ping:
-
-   ```
-   curl -X POST http://localhost:8080/api/ping/YOUR_JOB_ID
-   ```
-
-5. Refresh the dashboard. The job's last ping time updates and the status stays healthy.
+4. Run the copied ping (or the example below). Refresh the dashboard. The job's last ping time updates and the status stays healthy.
 
 The Compose UI is nginx on port 3000. It proxies `/api` to the API container, and the frontend calls that same-origin path. `VITE_API_URL` is a **build** argument (Vite inlines it). Leave it empty so the browser uses relative `/api` URLs. Set it only when the API is on a different origin:
 
@@ -118,9 +116,14 @@ The API reads these environment variables. Compose sets the database values show
 | `DB_NAME` | `cronsentry` | Database name |
 | `DB_SSLMODE` | `disable` | lib/pq SSL mode. Use `require` for hosted Postgres. |
 | `PORT` | `8080` | API listen port |
-| `SENDGRID_API_KEY` | unset | When set, missing-job email is sent through SendGrid. When unset, the API logs a dry-run line and does not call SendGrid. |
+| `API_TOKEN` | unset | Bearer token for `/api/jobs`. When unset, those routes return 401. `POST /api/ping/{id}` stays public. |
+| `SENDGRID_API_KEY` | unset | When set, missing-job email is sent through SendGrid. When unset, the API logs `would send` and marks the notification `skipped`. |
+| `EMAIL_FROM` | `OpenSentry <noreply@localhost>` | SendGrid from address. Use a verified sender, for example `OpenSentry <alerts@yourdomain>`. |
+| `DASHBOARD_URL` | unset | Link included in alert email. Compose defaults this to `http://localhost:3000`. |
 
-Compose does not configure an email provider. A missing `SENDGRID_API_KEY` is safe: alerts are logged and not marked failed.
+`GET /healthz` returns 200 when the API can ping Postgres. It does not require `API_TOKEN`.
+
+Compose does not configure an email provider. A missing `SENDGRID_API_KEY` is safe: alerts are logged and marked skipped, not failed. Create a SendGrid API key, verify the `EMAIL_FROM` sender, and set `SENDGRID_API_KEY` when you want real mail.
 
 ## License
 

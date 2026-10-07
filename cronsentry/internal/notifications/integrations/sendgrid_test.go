@@ -5,6 +5,21 @@ import (
 	"testing"
 )
 
+func TestParseEmailFrom(t *testing.T) {
+	name, email := ParseEmailFrom("")
+	if name != "OpenSentry" || email != "noreply@localhost" {
+		t.Fatalf("empty = %q %q", name, email)
+	}
+	name, email = ParseEmailFrom("Alerts <ops@example.com>")
+	if name != "Alerts" || email != "ops@example.com" {
+		t.Fatalf("named = %q %q", name, email)
+	}
+	name, email = ParseEmailFrom("ops@example.com")
+	if name != "OpenSentry" || email != "ops@example.com" {
+		t.Fatalf("bare = %q %q", name, email)
+	}
+}
+
 func TestSendResultError(t *testing.T) {
 	tests := []struct {
 		name       string

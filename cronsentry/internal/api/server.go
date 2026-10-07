@@ -1,10 +1,12 @@
 package api
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/adhocore/gronx"
@@ -14,33 +16,93 @@ import (
 )
 
 type Server struct {
-	db     *db.Database
-	logger *log.Logger
+	db       *db.Database
+	logger   *log.Logger
+	apiToken string
 }
 
-func NewServer(database *db.Database, logger *log.Logger) *Server {
+func NewServer(database *db.Database, logger *log.Logger, apiToken string) *Server {
 	return &Server{
-		db:     database,
-		logger: logger,
+		db:       database,
+		logger:   logger,
+		apiToken: apiToken,
 	}
 }
 
 func (s *Server) Router() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("POST /api/jobs", s.handleCreateJob)
 	mux.HandleFunc("GET /api/jobs", s.handleListJobs)
 	mux.HandleFunc("GET /api/jobs/{id}", s.handleGetJob)
 	mux.HandleFunc("PUT /api/jobs/{id}", s.handleUpdateJob)
 	mux.HandleFunc("DELETE /api/jobs/{id}", s.handleDeleteJob)
 	mux.HandleFunc("POST /api/ping/{id}", s.handlePing)
-	return s.corsMiddleware(s.loggingMiddleware(s.recoveryMiddleware(mux)))
+	return s.corsMiddleware(s.loggingMiddleware(s.recoveryMiddleware(s.authMiddleware(mux))))
+}
+
+// managementPath reports whether the request mutates or reads job configuration.
+// Ping URLs and the health probe stay public.
+func managementPath(method, path string) bool {
+	if method == http.MethodOptions {
+		return false
+	}
+	if path == "/healthz" || strings.HasPrefix(path, "/api/ping/") {
+		return false
+	}
+	return strings.HasPrefix(path, "/api/jobs")
+}
+
+func bearerToken(r *http.Request) string {
+	header := r.Header.Get("Authorization")
+	if strings.HasPrefix(header, "Bearer ") {
+		return strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
+	}
+	return strings.TrimSpace(r.Header.Get("X-API-Token"))
+}
+
+func tokenMatches(configured, presented string) bool {
+	if configured == "" || presented == "" || len(configured) != len(presented) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(configured), []byte(presented)) == 1
+}
+
+func (s *Server) authMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !managementPath(r.Method, r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !tokenMatches(s.apiToken, bearerToken(r)) {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="opensentry"`)
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil || s.db.GetDB() == nil {
+		http.Error(w, "database unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if err := s.db.GetDB().PingContext(r.Context()); err != nil {
+		s.logger.Printf("healthz database ping failed: %v", err)
+		http.Error(w, "database unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"status":"ok"}`))
 }
 
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Token")
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
