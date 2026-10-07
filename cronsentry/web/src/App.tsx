@@ -73,6 +73,7 @@ function App() {
     sessionStorage.setItem(TOKEN_KEY, next);
     setToken(next);
     setIsLoading(true);
+    fetchJobs(next);
   };
 
   const onAuthError = useCallback(() => {

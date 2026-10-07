@@ -73,7 +73,7 @@ export function JobCard({ job, apiOrigin, onOpen, onDelete }: JobCardProps) {
       <div className="mt-4 space-y-2">
         <div className="flex justify-between text-sm">
           <span className="text-gray-500">Schedule:</span>
-          <span className="font-medium">{job.schedule}</span>
+          <span className="font-mono font-medium">{job.schedule}</span>
         </div>
         <div className="flex justify-between text-sm">
           <span className="text-gray-500">Last Ping:</span>

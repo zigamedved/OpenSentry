@@ -195,7 +195,7 @@ export function JobDetail({ jobId, apiUrl, token, apiOrigin, onBack, onDelete, o
           <dl className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <dt className="text-sm text-gray-500">Schedule</dt>
-              <dd className="font-medium text-gray-900">{job.schedule}</dd>
+              <dd className="overflow-x-auto font-mono font-medium text-gray-900">{job.schedule}</dd>
             </div>
             <div>
               <dt className="text-sm text-gray-500">Grace</dt>
