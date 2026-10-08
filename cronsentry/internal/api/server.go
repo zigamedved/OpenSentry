@@ -1,7 +1,6 @@
 package api
 
 import (
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"log"
@@ -18,22 +17,24 @@ import (
 )
 
 type Server struct {
-	db       *db.Database
-	logger   *log.Logger
-	apiToken string
+	db     *db.Database
+	logger *log.Logger
 }
 
-func NewServer(database *db.Database, logger *log.Logger, apiToken string) *Server {
+func NewServer(database *db.Database, logger *log.Logger) *Server {
 	return &Server{
-		db:       database,
-		logger:   logger,
-		apiToken: apiToken,
+		db:     database,
+		logger: logger,
 	}
 }
 
 func (s *Server) Router() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.handleHealth)
+	mux.HandleFunc("POST /api/register", s.handleRegister)
+	mux.HandleFunc("POST /api/login", s.handleLogin)
+	mux.HandleFunc("POST /api/logout", s.handleLogout)
+	mux.HandleFunc("GET /api/me", s.handleMe)
 	mux.HandleFunc("POST /api/jobs", s.handleCreateJob)
 	mux.HandleFunc("GET /api/jobs", s.handleListJobs)
 	mux.HandleFunc("GET /api/jobs/{id}", s.handleGetJob)
@@ -46,22 +47,23 @@ func (s *Server) Router() http.Handler {
 	return s.corsMiddleware(s.loggingMiddleware(s.recoveryMiddleware(s.authMiddleware(mux))))
 }
 
-// managementPath reports whether the request mutates or reads job configuration.
-// Ping URLs and the health probe stay public.
-func managementPath(method, path string) bool {
+// publicPath is reachable without a session. Ping URLs, health, and
+// account creation stay public. Everything else under /api/ needs a session.
+func publicPath(method, path string) bool {
 	if method == http.MethodOptions {
-		return false
+		return true
 	}
 	if path == "/healthz" || strings.HasPrefix(path, "/api/ping/") {
-		return false
+		return true
 	}
-	return strings.HasPrefix(path, "/api/")
+	if method == http.MethodPost && (path == "/api/register" || path == "/api/login") {
+		return true
+	}
+	return false
 }
 
-const demoUserID = "test-user"
-
 func (s *Server) handleListChannels(w http.ResponseWriter, r *http.Request) {
-	channels, err := s.db.ListAlertChannels(demoUserID)
+	channels, err := s.db.ListAlertChannels(currentUserID(r))
 	if err != nil {
 		s.logger.Printf("Error listing alert channels: %v", err)
 		http.Error(w, "Failed to list alert channels", http.StatusInternalServerError)
@@ -94,7 +96,7 @@ func (s *Server) handlePutChannel(w http.ResponseWriter, r *http.Request) {
 
 	webhookURL := strings.TrimSpace(body.WebhookURL)
 	if webhookURL == "" {
-		if err := s.db.DeleteAlertChannel(demoUserID, kind); err != nil {
+		if err := s.db.DeleteAlertChannel(currentUserID(r), kind); err != nil {
 			s.logger.Printf("Error clearing %s channel: %v", kind, err)
 			http.Error(w, "Failed to clear alert channel", http.StatusInternalServerError)
 			return
@@ -106,7 +108,7 @@ func (s *Server) handlePutChannel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := s.db.UpsertAlertChannel(demoUserID, kind, webhookURL); err != nil {
+	if err := s.db.UpsertAlertChannel(currentUserID(r), kind, webhookURL); err != nil {
 		s.logger.Printf("Error saving %s channel: %v", kind, err)
 		http.Error(w, "Failed to save alert channel", http.StatusInternalServerError)
 		return
@@ -115,33 +117,24 @@ func (s *Server) handlePutChannel(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"kind": kind, "webhook_url": webhookURL})
 }
 
-func bearerToken(r *http.Request) string {
-	header := r.Header.Get("Authorization")
-	if strings.HasPrefix(header, "Bearer ") {
-		return strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
-	}
-	return strings.TrimSpace(r.Header.Get("X-API-Token"))
-}
-
-func tokenMatches(configured, presented string) bool {
-	if configured == "" || presented == "" || len(configured) != len(presented) {
-		return false
-	}
-	return subtle.ConstantTimeCompare([]byte(configured), []byte(presented)) == 1
-}
-
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !managementPath(r.Method, r.URL.Path) {
+		if publicPath(r.Method, r.URL.Path) || !strings.HasPrefix(r.URL.Path, "/api/") {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if !tokenMatches(s.apiToken, bearerToken(r)) {
+		user, err := s.userFromRequest(r)
+		if err != nil {
+			s.logger.Printf("session lookup: %v", err)
+			http.Error(w, "Failed to authenticate", http.StatusInternalServerError)
+			return
+		}
+		if user == nil {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="opensentry"`)
 			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(w, withUser(r, user))
 	})
 }
 
@@ -164,7 +157,7 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Token")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
@@ -217,7 +210,7 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 		Status:      models.StatusHealthy,
 		LastPing:    time.Now().UTC(),
 		NextExpect:  nextTick,
-		UserID:      demoUserID, // hardcoded for now, should come from auth
+		UserID:      currentUserID(r),
 		CreatedAt:   time.Now().UTC(),
 		UpdatedAt:   time.Now().UTC(),
 	}
@@ -234,7 +227,7 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
-	jobs, err := s.db.ListJobsByUser(demoUserID)
+	jobs, err := s.db.ListJobsByUser(currentUserID(r))
 	if err != nil {
 		s.logger.Printf("Error listing jobs: %v", err)
 		http.Error(w, "Failed to list jobs", http.StatusInternalServerError)
@@ -257,7 +250,7 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, ok := s.ownedJob(w, id)
+	job, ok := s.ownedJob(w, r, id)
 	if !ok {
 		return
 	}
@@ -266,8 +259,13 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(job)
 }
 
-func (s *Server) ownedJob(w http.ResponseWriter, id string) (*models.Job, bool) {
-	job, err := s.db.GetJobForUser(id, demoUserID)
+func (s *Server) ownedJob(w http.ResponseWriter, r *http.Request, id string) (*models.Job, bool) {
+	userID := currentUserID(r)
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return nil, false
+	}
+	job, err := s.db.GetJobForUser(id, userID)
 	if err != nil {
 		s.logger.Printf("Error getting job: %v", err)
 		http.Error(w, "Failed to get job", http.StatusInternalServerError)
@@ -287,7 +285,7 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, ok := s.ownedJob(w, id); !ok {
+	if _, ok := s.ownedJob(w, r, id); !ok {
 		return
 	}
 
@@ -301,7 +299,7 @@ func (s *Server) handleListEvents(w http.ResponseWriter, r *http.Request) {
 		limit = parsed
 	}
 
-	events, err := s.db.ListJobEvents(id, demoUserID, limit)
+	events, err := s.db.ListJobEvents(id, currentUserID(r), limit)
 	if err != nil {
 		s.logger.Printf("Error listing job events: %v", err)
 		http.Error(w, "Failed to list job events", http.StatusInternalServerError)
@@ -370,7 +368,7 @@ func (s *Server) handleUpdateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, ok := s.ownedJob(w, id)
+	job, ok := s.ownedJob(w, r, id)
 	if !ok {
 		return
 	}
@@ -501,11 +499,11 @@ func (s *Server) handleDeleteJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, ok := s.ownedJob(w, id); !ok {
+	if _, ok := s.ownedJob(w, r, id); !ok {
 		return
 	}
 
-	if err := s.db.DeleteJob(id, demoUserID); err != nil {
+	if err := s.db.DeleteJob(id, currentUserID(r)); err != nil {
 		s.logger.Printf("Error deleting job: %v", err)
 		http.Error(w, "Failed to delete job", http.StatusInternalServerError)
 		return

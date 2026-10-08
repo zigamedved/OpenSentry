@@ -14,7 +14,7 @@ import (
 )
 
 func TestManagementAuth(t *testing.T) {
-	s := &Server{apiToken: "secret-token", logger: log.New(io.Discard, "", 0)}
+	s := &Server{logger: log.New(io.Discard, "", 0)}
 	ok := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
@@ -29,7 +29,7 @@ func TestManagementAuth(t *testing.T) {
 		}
 	})
 
-	t.Run("wrong token is 401", func(t *testing.T) {
+	t.Run("unknown bearer token is 401", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/jobs", nil)
 		req.Header.Set("Authorization", "Bearer other")
 		rr := httptest.NewRecorder()
@@ -39,32 +39,11 @@ func TestManagementAuth(t *testing.T) {
 		}
 	})
 
-	t.Run("bearer token allows management", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodDelete, "/api/jobs/abc", nil)
-		req.Header.Set("Authorization", "Bearer secret-token")
-		rr := httptest.NewRecorder()
-		handler.ServeHTTP(rr, req)
-		if rr.Code != http.StatusNoContent {
-			t.Fatalf("status = %d, want 204", rr.Code)
-		}
-	})
-
-	t.Run("x-api-token header allows management", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/jobs/abc", nil)
+	t.Run("shared api token header is not a session", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/jobs", nil)
 		req.Header.Set("X-API-Token", "secret-token")
 		rr := httptest.NewRecorder()
 		handler.ServeHTTP(rr, req)
-		if rr.Code != http.StatusNoContent {
-			t.Fatalf("status = %d, want 204", rr.Code)
-		}
-	})
-
-	t.Run("unset server token rejects even a presented token", func(t *testing.T) {
-		open := &Server{logger: log.New(io.Discard, "", 0)}
-		req := httptest.NewRequest(http.MethodGet, "/api/jobs", nil)
-		req.Header.Set("Authorization", "Bearer secret-token")
-		rr := httptest.NewRecorder()
-		open.authMiddleware(ok).ServeHTTP(rr, req)
 		if rr.Code != http.StatusUnauthorized {
 			t.Fatalf("status = %d, want 401", rr.Code)
 		}
@@ -76,6 +55,26 @@ func TestManagementAuth(t *testing.T) {
 		handler.ServeHTTP(rr, req)
 		if rr.Code != http.StatusNoContent {
 			t.Fatalf("status = %d, want 204", rr.Code)
+		}
+	})
+
+	t.Run("register and login stay public", func(t *testing.T) {
+		for _, path := range []string{"/api/register", "/api/login"} {
+			req := httptest.NewRequest(http.MethodPost, path, nil)
+			rr := httptest.NewRecorder()
+			handler.ServeHTTP(rr, req)
+			if rr.Code != http.StatusNoContent {
+				t.Fatalf("%s status = %d, want 204", path, rr.Code)
+			}
+		}
+	})
+
+	t.Run("whoami requires a session", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/me", nil)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusUnauthorized {
+			t.Fatalf("status = %d, want 401", rr.Code)
 		}
 	})
 

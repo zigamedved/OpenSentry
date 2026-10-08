@@ -12,8 +12,8 @@ services:
       - DB_PASSWORD=postgres
       - DB_NAME=cronsentry
       - DB_SSLMODE=disable
-      # Required for the dashboard. Leave unset to fail closed (401). Do not bake a default.
-      - API_TOKEN=${API_TOKEN:-}
+      # Optional. When true, seed test@example.com / opensentry-demo and attach env webhooks to that user.
+      - DEMO_SEED=${DEMO_SEED:-}
       # Optional. Unset keeps email in dry-run (logged, status skipped, not sent).
       - SENDGRID_API_KEY=${SENDGRID_API_KEY:-}
       - EMAIL_FROM=${EMAIL_FROM:-}

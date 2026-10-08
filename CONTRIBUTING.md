@@ -14,12 +14,11 @@ Create a database that matches the API defaults:
 
 ```bash
 cd cronsentry
-export API_TOKEN="$(openssl rand -hex 32)"
 go test ./...
 go run ./cmd
 ```
 
-Paste `API_TOKEN` into the dashboard. Without it, `/api/jobs` returns 401. Ping URLs stay public.
+Open the dashboard and create an account. Without a session, `/api/jobs` returns 401. Ping URLs stay public. Set `DEMO_SEED=true` to create `test@example.com` / `opensentry-demo` on startup.
 
 In another shell:
 

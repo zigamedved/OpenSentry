@@ -5,22 +5,23 @@ import { formatTime, type Job, type JobEvent } from '../types';
 interface JobDetailProps {
   jobId: string;
   apiUrl: string;
-  token: string;
   apiOrigin: string;
   onBack: () => void;
   onDelete: (id: string) => Promise<string | null>;
   onAuthError: () => void;
 }
 
-function authHeaders(token: string, json = false): HeadersInit {
-  const headers: Record<string, string> = {};
-  if (json) headers['Content-Type'] = 'application/json';
-  if (token) headers.Authorization = `Bearer ${token}`;
-  return headers;
+function jsonInit(body: string): RequestInit {
+  return {
+    method: 'PUT',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+  };
 }
 
 async function errorMessage(response: Response, fallback: string) {
-  if (response.status === 401) return 'The API token was rejected.';
+  if (response.status === 401) return 'Sign in again.';
   const text = (await response.text()).trim();
   return text || fallback;
 }
@@ -31,7 +32,7 @@ const statusColors: Record<string, string> = {
   paused: 'bg-gray-100 text-gray-800',
 };
 
-export function JobDetail({ jobId, apiUrl, token, apiOrigin, onBack, onDelete, onAuthError }: JobDetailProps) {
+export function JobDetail({ jobId, apiUrl, apiOrigin, onBack, onDelete, onAuthError }: JobDetailProps) {
   const [job, setJob] = useState<Job | null>(null);
   const [events, setEvents] = useState<JobEvent[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -51,11 +52,11 @@ export function JobDetail({ jobId, apiUrl, token, apiOrigin, onBack, onDelete, o
       setLoadError(null);
       setEventsError(null);
       try {
-        const response = await fetch(`${apiUrl}/api/jobs/${jobId}`, { headers: authHeaders(token) });
+        const response = await fetch(`${apiUrl}/api/jobs/${jobId}`, { credentials: 'include' });
         if (cancelled) return;
         if (response.status === 401) {
           onAuthError();
-          setLoadError('The API token was rejected.');
+          setLoadError('Sign in again.');
           return;
         }
         if (response.status === 404) {
@@ -80,11 +81,11 @@ export function JobDetail({ jobId, apiUrl, token, apiOrigin, onBack, onDelete, o
       }
 
       try {
-        const response = await fetch(`${apiUrl}/api/jobs/${jobId}/events`, { headers: authHeaders(token) });
+        const response = await fetch(`${apiUrl}/api/jobs/${jobId}/events`, { credentials: 'include' });
         if (cancelled) return;
         if (response.status === 401) {
           onAuthError();
-          setEventsError('The API token was rejected.');
+          setEventsError('Sign in again.');
           return;
         }
         if (!response.ok) {
@@ -101,20 +102,16 @@ export function JobDetail({ jobId, apiUrl, token, apiOrigin, onBack, onDelete, o
     return () => {
       cancelled = true;
     };
-  }, [apiUrl, jobId, onAuthError, token, reloadKey]);
+  }, [apiUrl, jobId, onAuthError, reloadKey]);
 
   const saveStatus = async (status: 'paused' | 'healthy') => {
     setActionError(null);
     setSaving(true);
     try {
-      const response = await fetch(`${apiUrl}/api/jobs/${jobId}`, {
-        method: 'PUT',
-        headers: authHeaders(token, true),
-        body: JSON.stringify({ status }),
-      });
+      const response = await fetch(`${apiUrl}/api/jobs/${jobId}`, jsonInit(JSON.stringify({ status })));
       if (response.status === 401) {
         onAuthError();
-        setActionError('The API token was rejected.');
+        setActionError('Sign in again.');
         return;
       }
       if (!response.ok) {
@@ -134,19 +131,15 @@ export function JobDetail({ jobId, apiUrl, token, apiOrigin, onBack, onDelete, o
     setActionError(null);
     setSaving(true);
     try {
-      const response = await fetch(`${apiUrl}/api/jobs/${jobId}`, {
-        method: 'PUT',
-        headers: authHeaders(token, true),
-        body: JSON.stringify({
-          name,
-          description,
-          schedule,
-          grace_time: graceTime,
-        }),
-      });
+      const response = await fetch(`${apiUrl}/api/jobs/${jobId}`, jsonInit(JSON.stringify({
+        name,
+        description,
+        schedule,
+        grace_time: graceTime,
+      })));
       if (response.status === 401) {
         onAuthError();
-        setActionError('The API token was rejected.');
+        setActionError('Sign in again.');
         return;
       }
       if (!response.ok) {
