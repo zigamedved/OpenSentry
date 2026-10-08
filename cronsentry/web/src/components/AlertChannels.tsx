@@ -2,17 +2,9 @@ import { useEffect, useState } from 'react';
 
 interface AlertChannelsProps {
   apiUrl: string;
-  token: string;
 }
 
-function headers(token: string, json = false): HeadersInit {
-  const value: Record<string, string> = {};
-  if (json) value['Content-Type'] = 'application/json';
-  if (token) value.Authorization = `Bearer ${token}`;
-  return value;
-}
-
-export function AlertChannels({ apiUrl, token }: AlertChannelsProps) {
+export function AlertChannels({ apiUrl }: AlertChannelsProps) {
   const [slack, setSlack] = useState('');
   const [discord, setDiscord] = useState('');
   const [status, setStatus] = useState('');
@@ -22,7 +14,7 @@ export function AlertChannels({ apiUrl, token }: AlertChannelsProps) {
     let cancelled = false;
     async function load() {
       try {
-        const response = await fetch(`${apiUrl}/api/channels`, { headers: headers(token) });
+        const response = await fetch(`${apiUrl}/api/channels`, { credentials: 'include' });
         if (!response.ok) throw new Error(await response.text());
         const data = await response.json();
         if (cancelled) return;
@@ -37,7 +29,7 @@ export function AlertChannels({ apiUrl, token }: AlertChannelsProps) {
     return () => {
       cancelled = true;
     };
-  }, [apiUrl, token]);
+  }, [apiUrl]);
 
   async function save(kind: 'slack' | 'discord', webhookURL: string) {
     setStatus('');
@@ -45,7 +37,8 @@ export function AlertChannels({ apiUrl, token }: AlertChannelsProps) {
     try {
       const response = await fetch(`${apiUrl}/api/channels/${kind}`, {
         method: 'PUT',
-        headers: headers(token, true),
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ webhook_url: webhookURL.trim() }),
       });
       if (!response.ok) {

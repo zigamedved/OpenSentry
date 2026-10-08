@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -29,8 +30,19 @@ func main() {
 	}
 	logger.Println("Database initialized successfully")
 
-	if err := database.SyncEnvAlertChannels("test-user", os.Getenv("SLACK_WEBHOOK_URL"), os.Getenv("DISCORD_WEBHOOK_URL")); err != nil {
-		logger.Fatalf("Failed to store alert channel env: %v", err)
+	slackURL := os.Getenv("SLACK_WEBHOOK_URL")
+	discordURL := os.Getenv("DISCORD_WEBHOOK_URL")
+	if demoSeedEnabled() {
+		userID, err := database.SeedDemoUser()
+		if err != nil {
+			logger.Fatalf("Failed to seed demo user: %v", err)
+		}
+		logger.Printf("Demo account ready: test@example.com (user %s)", userID)
+		if err := database.SyncEnvAlertChannels(userID, slackURL, discordURL); err != nil {
+			logger.Fatalf("Failed to store alert channel env: %v", err)
+		}
+	} else if slackURL != "" || discordURL != "" {
+		logger.Println("SLACK_WEBHOOK_URL and DISCORD_WEBHOOK_URL apply only when DEMO_SEED is set; configure channels in the dashboard")
 	}
 
 	apiKey := os.Getenv("SENDGRID_API_KEY")
@@ -50,11 +62,7 @@ func main() {
 	notificationProcessor.Start()
 	logger.Println("Notification processor started")
 
-	apiToken := os.Getenv("API_TOKEN")
-	if apiToken == "" {
-		logger.Println("API_TOKEN unset; management routes will return 401")
-	}
-	server := api.NewServer(database, logger, apiToken)
+	server := api.NewServer(database, logger)
 	addr := ":8080"
 	if port := os.Getenv("PORT"); port != "" {
 		addr = ":" + port
@@ -98,4 +106,13 @@ func main() {
 	}
 
 	logger.Println("Server exited properly")
+}
+
+func demoSeedEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("DEMO_SEED"))) {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
+	}
 }

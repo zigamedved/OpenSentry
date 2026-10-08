@@ -75,8 +75,8 @@ func TestJobLifecycleMatchesCurrentBehavior(t *testing.T) {
 	if job.Schedule != "0 0 * * *" || job.GraceTime != 15 || job.Status != models.StatusHealthy {
 		t.Fatalf("schedule/status = %s %d %s", job.Schedule, job.GraceTime, job.Status)
 	}
-	if job.UserID != "test-user" {
-		t.Fatalf("user_id = %q", job.UserID)
+	if job.UserID != behaviorUserID {
+		t.Fatalf("user_id = %q, want %q", job.UserID, behaviorUserID)
 	}
 	if job.NextExpect.Before(time.Now().UTC().Add(-2 * time.Second)) {
 		t.Fatalf("next_expect = %s", job.NextExpect)
@@ -378,6 +378,181 @@ func TestOtherUsersJobLooksMissing(t *testing.T) {
 	}
 }
 
+func TestAccounts(t *testing.T) {
+	srv := newBehaviorServer(t)
+
+	me := do(t, srv, http.MethodGet, "/api/me", "")
+	if me.StatusCode != http.StatusOK {
+		t.Fatalf("me = %d %s", me.StatusCode, me.Body)
+	}
+	if strings.Contains(me.Body, "password") {
+		t.Fatalf("password leaked: %s", me.Body)
+	}
+	var profile struct {
+		ID    string `json:"id"`
+		Email string `json:"email"`
+		Name  string `json:"name"`
+	}
+	if err := json.Unmarshal([]byte(me.Body), &profile); err != nil {
+		t.Fatal(err)
+	}
+	if profile.ID != behaviorUserID || profile.Email != "behavior@example.com" || profile.Name != "Behavior" {
+		t.Fatalf("profile = %+v", profile)
+	}
+
+	registered := doAs(t, srv, "", http.MethodPost, "/api/register", `{
+		"email": "Cookie@example.com",
+		"password": "cookie-pass",
+		"name": "Cookie"
+	}`)
+	cookies := (&http.Response{Header: registered.Header}).Cookies()
+	if registered.StatusCode != http.StatusCreated {
+		t.Fatalf("register = %d %s", registered.StatusCode, registered.Body)
+	}
+	var session struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal([]byte(registered.Body), &session); err != nil {
+		t.Fatal(err)
+	}
+	var sessionCookie *http.Cookie
+	for _, cookie := range cookies {
+		if cookie.Name == "opensentry_session" {
+			sessionCookie = cookie
+		}
+	}
+	if sessionCookie == nil || sessionCookie.Value == "" || !sessionCookie.HttpOnly {
+		t.Fatalf("session cookie = %+v", cookies)
+	}
+	if sessionCookie.Value != session.Token {
+		t.Fatal("cookie and json token differ")
+	}
+
+	cookieMe, err := http.NewRequest(http.MethodGet, srv.URL+"/api/me", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookieMe.AddCookie(sessionCookie)
+	cookieResp, err := http.DefaultClient.Do(cookieMe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookieBody, _ := io.ReadAll(cookieResp.Body)
+	cookieResp.Body.Close()
+	if cookieResp.StatusCode != http.StatusOK || !strings.Contains(string(cookieBody), "cookie@example.com") {
+		t.Fatalf("cookie me = %d %s", cookieResp.StatusCode, cookieBody)
+	}
+
+	wrong := doAs(t, srv, "", http.MethodPost, "/api/login", `{
+		"email": "behavior@example.com",
+		"password": "not-the-password"
+	}`)
+	unknown := doAs(t, srv, "", http.MethodPost, "/api/login", `{
+		"email": "nobody@example.com",
+		"password": "behavior-pass"
+	}`)
+	if wrong.StatusCode != http.StatusUnauthorized || unknown.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("login failures = %d %d", wrong.StatusCode, unknown.StatusCode)
+	}
+	if strings.TrimSpace(wrong.Body) != "Invalid email or password" || wrong.Body != unknown.Body {
+		t.Fatalf("login errors differ: %q vs %q", wrong.Body, unknown.Body)
+	}
+
+	duplicate := doAs(t, srv, "", http.MethodPost, "/api/register", `{
+		"email": "behavior@example.com",
+		"password": "behavior-pass",
+		"name": "Again"
+	}`)
+	if duplicate.StatusCode != http.StatusConflict || strings.TrimSpace(duplicate.Body) != "Email already registered" {
+		t.Fatalf("duplicate = %d %q", duplicate.StatusCode, duplicate.Body)
+	}
+
+	short := doAs(t, srv, "", http.MethodPost, "/api/register", `{
+		"email": "short@example.com",
+		"password": "short",
+		"name": "Short"
+	}`)
+	if short.StatusCode != http.StatusBadRequest || strings.TrimSpace(short.Body) != "Password must be at least 8 characters" {
+		t.Fatalf("short password = %d %q", short.StatusCode, short.Body)
+	}
+
+	stale := doAs(t, srv, "not-a-real-session", http.MethodPost, "/api/logout", "")
+	if stale.StatusCode != http.StatusNoContent || !sessionCookieCleared(stale.Header) {
+		t.Fatalf("stale logout = %d cookies %v", stale.StatusCode, stale.Header.Values("Set-Cookie"))
+	}
+	if do(t, srv, http.MethodGet, "/api/me", "").StatusCode != http.StatusOK {
+		t.Fatal("stale logout removed the real session")
+	}
+
+	loggedOut := do(t, srv, http.MethodPost, "/api/logout", "")
+	if loggedOut.StatusCode != http.StatusNoContent || !sessionCookieCleared(loggedOut.Header) {
+		t.Fatalf("logout = %d cookies %v body %s", loggedOut.StatusCode, loggedOut.Header.Values("Set-Cookie"), loggedOut.Body)
+	}
+	afterLogout := do(t, srv, http.MethodGet, "/api/me", "")
+	if afterLogout.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("me after logout = %d %s", afterLogout.StatusCode, afterLogout.Body)
+	}
+
+	loggedIn := doAs(t, srv, "", http.MethodPost, "/api/login", `{
+		"email": " Behavior@Example.com ",
+		"password": "behavior-pass"
+	}`)
+	if loggedIn.StatusCode != http.StatusOK {
+		t.Fatalf("login = %d %s", loggedIn.StatusCode, loggedIn.Body)
+	}
+	var logged struct {
+		Token string `json:"token"`
+		User  struct {
+			ID string `json:"id"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal([]byte(loggedIn.Body), &logged); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(loggedIn.Body, "password") || logged.User.ID != behaviorUserID || logged.Token == "" {
+		t.Fatalf("login payload = %s", loggedIn.Body)
+	}
+	behaviorToken = logged.Token
+
+	created := do(t, srv, http.MethodPost, "/api/jobs", `{
+		"name": "Mine",
+		"schedule": "0 0 * * *",
+		"grace_time": 5
+	}`)
+	if created.StatusCode != http.StatusCreated {
+		t.Fatalf("create = %d %s", created.StatusCode, created.Body)
+	}
+	job := decodeJob(t, created.Body)
+
+	other := doAs(t, srv, "", http.MethodPost, "/api/register", `{
+		"email": "second@example.com",
+		"password": "second-pass",
+		"name": "Second"
+	}`)
+	if other.StatusCode != http.StatusCreated {
+		t.Fatalf("second register = %d %s", other.StatusCode, other.Body)
+	}
+	var otherSession struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal([]byte(other.Body), &otherSession); err != nil {
+		t.Fatal(err)
+	}
+	otherList := doAs(t, srv, otherSession.Token, http.MethodGet, "/api/jobs", "")
+	if strings.TrimSpace(otherList.Body) != "[]" {
+		t.Fatalf("second user list = %s", otherList.Body)
+	}
+	otherGet := doAs(t, srv, otherSession.Token, http.MethodGet, "/api/jobs/"+job.ID, "")
+	if otherGet.StatusCode != http.StatusNotFound {
+		t.Fatalf("second user get = %d %s", otherGet.StatusCode, otherGet.Body)
+	}
+	ownList := do(t, srv, http.MethodGet, "/api/jobs", "")
+	jobs := decodeJobs(t, ownList.Body)
+	if len(jobs) != 1 || jobs[0].ID != job.ID {
+		t.Fatalf("owner list = %+v", jobs)
+	}
+}
+
 func decodeEvents(t *testing.T, body string) []models.JobEvent {
 	t.Helper()
 	var events []models.JobEvent
@@ -406,12 +581,35 @@ func newBehaviorServer(t *testing.T) *httptest.Server {
 	if err := database.InitDatabase(); err != nil {
 		t.Fatalf("init schema: %v", err)
 	}
-	if _, err := database.GetDB().Exec(`TRUNCATE TABLE jobs RESTART IDENTITY CASCADE`); err != nil {
-		t.Fatalf("truncate jobs: %v", err)
+	if _, err := database.GetDB().Exec(`TRUNCATE TABLE users RESTART IDENTITY CASCADE`); err != nil {
+		t.Fatalf("truncate users: %v", err)
 	}
 
-	srv := httptest.NewServer(NewServer(database, log.New(io.Discard, "", 0), behaviorAPIToken).Router())
+	srv := httptest.NewServer(NewServer(database, log.New(io.Discard, "", 0)).Router())
 	t.Cleanup(srv.Close)
+
+	registered := doAs(t, srv, "", http.MethodPost, "/api/register", `{
+		"email": "behavior@example.com",
+		"password": "behavior-pass",
+		"name": "Behavior"
+	}`)
+	if registered.StatusCode != http.StatusCreated {
+		t.Fatalf("register behavior user: %d %s", registered.StatusCode, registered.Body)
+	}
+	var session struct {
+		Token string `json:"token"`
+		User  struct {
+			ID string `json:"id"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal([]byte(registered.Body), &session); err != nil {
+		t.Fatalf("decode register: %v", err)
+	}
+	if session.Token == "" || session.User.ID == "" {
+		t.Fatalf("register session = %+v", session)
+	}
+	behaviorToken = session.Token
+	behaviorUserID = session.User.ID
 	return srv
 }
 
@@ -435,7 +633,21 @@ func ensureTestDatabase(t *testing.T) {
 	}
 }
 
+func sessionCookieCleared(header http.Header) bool {
+	for _, cookie := range (&http.Response{Header: header}).Cookies() {
+		if cookie.Name == "opensentry_session" && cookie.MaxAge < 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func do(t *testing.T, srv *httptest.Server, method, path, body string) recorded {
+	t.Helper()
+	return doAs(t, srv, behaviorToken, method, path, body)
+}
+
+func doAs(t *testing.T, srv *httptest.Server, token, method, path, body string) recorded {
 	t.Helper()
 	req, err := http.NewRequest(method, srv.URL+path, bytes.NewBufferString(body))
 	if err != nil {
@@ -444,7 +656,9 @@ func do(t *testing.T, srv *httptest.Server, method, path, body string) recorded 
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	req.Header.Set("Authorization", "Bearer "+behaviorAPIToken)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -475,7 +689,10 @@ func decodeJobs(t *testing.T, body string) []models.Job {
 	return jobs
 }
 
-const behaviorAPIToken = "behavior-test-token"
+var (
+	behaviorToken  string
+	behaviorUserID string
+)
 
 func envOr(key, fallback string) string {
 	if value := os.Getenv(key); value != "" {

@@ -49,11 +49,15 @@ This design is lightweight and effective because it requires no agent installati
 
 ### Create a Job
 
-Management routes require `API_TOKEN`. Ping routes do not.
+Sign in with email and password. `POST /api/register` and `POST /api/login` return a session token and set an `opensentry_session` cookie. Send that token as `Authorization: Bearer` on management routes, or rely on the cookie from the dashboard. `POST /api/logout` ends the session. `GET /api/me` returns the signed-in user. Ping routes do not require a session.
 
 ```bash
+curl -c cookies.txt -X POST http://localhost:8080/api/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"you@example.com","password":"your-password"}'
+
 curl -X POST http://localhost:8080/api/jobs \
-  -H "Authorization: Bearer $API_TOKEN" \
+  -b cookies.txt \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Database Backup",
@@ -82,22 +86,19 @@ curl -X POST http://localhost:8080/api/ping/YOUR_JOB_ID
    cd OpenSentry/cronsentry
    ```
 
-2. Generate a management token and start the application. There is no default token:
+2. Start the application:
 
    ```
-   export API_TOKEN="$(openssl rand -hex 32)"
    docker compose up -d --build
    ```
 
-3. Open the dashboard at http://localhost:3000 (the API listens on http://localhost:8080) and paste `API_TOKEN` into the token field. Each job card shows a copyable `POST` curl. The job id in that URL is a secret.
+3. Open the dashboard at http://localhost:3000 (the API listens on http://localhost:8080) and create an account. Each account sees only its own jobs. Each job card shows a copyable `POST` curl. The job id in that URL is a secret.
 
 4. Run the copied ping (or the example below). Refresh the dashboard. The job's last ping time updates and the status stays healthy.
 
-The Compose UI is nginx on port 3000. It proxies `/api` to the API container, and the frontend calls that same-origin path. `VITE_API_URL` is a **build** argument (Vite inlines it). Leave it empty so the browser uses relative `/api` URLs. Set it only when the API is on a different origin:
+The Compose UI is nginx on port 3000. It proxies `/api` to the API container, and the frontend calls that same-origin path. `VITE_API_URL` is a **build** argument (Vite inlines it). Leave it empty.
 
-```
-docker compose build --build-arg VITE_API_URL=https://api.example.com web
-```
+The dashboard signs in with the `opensentry_session` cookie. Browsers only send that cookie to the same origin, and the API responds with `Access-Control-Allow-Origin: *` without credentials. A cross-origin `VITE_API_URL` will not receive the session cookie, so keep the dashboard and the API on one origin (nginx in Compose, the Vite proxy in local dev).
 
 ### Local Go and Vite
 
@@ -116,14 +117,18 @@ The API reads these environment variables. Compose sets the database values show
 | `DB_NAME` | `cronsentry` | Database name |
 | `DB_SSLMODE` | `disable` | lib/pq SSL mode. Use `require` for hosted Postgres. |
 | `PORT` | `8080` | API listen port |
-| `API_TOKEN` | unset | Bearer token for `/api/jobs`. When unset, those routes return 401. `POST /api/ping/{id}` stays public. |
+| `DEMO_SEED` | unset | When `true`, create `test@example.com` / `opensentry-demo` if that email is missing, and attach the Slack and Discord env webhooks to that user. |
 | `SENDGRID_API_KEY` | unset | When set, missing-job email is sent through SendGrid. When unset, the API logs `would send` and marks the notification `skipped`. |
 | `EMAIL_FROM` | `OpenSentry <noreply@localhost>` | SendGrid from address. Use a verified sender, for example `OpenSentry <alerts@yourdomain>`. |
 | `DASHBOARD_URL` | unset | Link included in alerts. Compose defaults this to `http://localhost:3000`. |
 | `SLACK_WEBHOOK_URL` | unset | Slack incoming webhook for the self-host user. Saved on startup when set. |
 | `DISCORD_WEBHOOK_URL` | unset | Discord webhook for the self-host user. Saved on startup when set. |
 
-`GET /healthz` returns 200 when the API can ping Postgres. It does not require `API_TOKEN`.
+`GET /healthz` returns 200 when the API can ping Postgres. It does not require a session.
+
+Accounts use email and password. Passwords are stored as bcrypt hashes and are never returned in JSON. A session is an opaque token stored only as a SHA-256 hash, valid for 14 days, sent as the `opensentry_session` cookie and as a bearer token. There is no shared `API_TOKEN`. `POST /api/logout` does not require a live session: it deletes the token when one matches and always expires the cookie.
+
+Jobs created before accounts belong to `test-user` (`test@example.com`) and stay hidden from accounts you register later. Set `DEMO_SEED=true` and restart once to sign in as that user, or create a new account and new jobs. If `test@example.com` is already in the database, `DEMO_SEED` leaves its password unchanged (the old seed password was `secret`). A missing email is created as `opensentry-demo`.
 
 Compose does not configure an email provider. A missing `SENDGRID_API_KEY` is safe: alerts are logged and marked skipped, not failed. Create a SendGrid API key, verify the `EMAIL_FROM` sender, and set `SENDGRID_API_KEY` when you want real mail.
 
@@ -131,7 +136,7 @@ Compose does not configure an email provider. A missing `SENDGRID_API_KEY` is sa
 
 Miss and recovery alerts go to every channel configured for the user: email, plus Slack and Discord when a webhook is saved. A delivery failure is stored on that notification and does not stop the checker or the other channels.
 
-You can paste the webhook in the dashboard (Alert channels) or set `SLACK_WEBHOOK_URL` / `DISCORD_WEBHOOK_URL`. An empty env var does not erase a URL saved in the dashboard. `PUT /api/channels/slack` or `PUT /api/channels/discord` with `{"webhook_url":""}` clears a channel. These routes require `API_TOKEN`.
+Paste the webhook in the dashboard (Alert channels) while signed in. `SLACK_WEBHOOK_URL` / `DISCORD_WEBHOOK_URL` are stored for the demo user only when `DEMO_SEED=true`. An empty env var does not erase a URL saved in the dashboard. `PUT /api/channels/slack` or `PUT /api/channels/discord` with `{"webhook_url":""}` clears a channel. These routes require a session.
 
 Create a Slack incoming webhook in your workspace's app settings, or a Discord channel webhook (Integrations → Webhooks → New Webhook). OpenSentry posts JSON:
 

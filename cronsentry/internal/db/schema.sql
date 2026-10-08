@@ -50,6 +50,17 @@ CREATE INDEX IF NOT EXISTS idx_job_events_created_at ON job_events(created_at);
 CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);
 CREATE INDEX IF NOT EXISTS idx_notifications_job_id ON notifications(job_id);
 
+CREATE TABLE IF NOT EXISTS sessions (
+    id VARCHAR(36) PRIMARY KEY,
+    user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash VARCHAR(64) NOT NULL UNIQUE,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
+
 CREATE TABLE IF NOT EXISTS alert_channels (
     id VARCHAR(36) PRIMARY KEY,
     user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -58,8 +69,4 @@ CREATE TABLE IF NOT EXISTS alert_channels (
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
     UNIQUE (user_id, kind)
-);
-
-INSERT INTO users (id, email, name, password_hash, created_at, updated_at)
-VALUES ('test-user', 'test@example.com', 'Test User', '$2a$10$vI8aWBnW3fID.ZQ4/zo1G.q1lRps.9cGLcZEiGDMVr5yUP1KUOYTa', NOW(), NOW())
-ON CONFLICT (id) DO NOTHING; 
+); 
