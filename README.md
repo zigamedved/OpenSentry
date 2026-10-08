@@ -96,11 +96,9 @@ curl -X POST http://localhost:8080/api/ping/YOUR_JOB_ID
 
 4. Run the copied ping (or the example below). Refresh the dashboard. The job's last ping time updates and the status stays healthy.
 
-The Compose UI is nginx on port 3000. It proxies `/api` to the API container, and the frontend calls that same-origin path. `VITE_API_URL` is a **build** argument (Vite inlines it). Leave it empty so the browser uses relative `/api` URLs. Set it only when the API is on a different origin:
+The Compose UI is nginx on port 3000. It proxies `/api` to the API container, and the frontend calls that same-origin path. `VITE_API_URL` is a **build** argument (Vite inlines it). Leave it empty.
 
-```
-docker compose build --build-arg VITE_API_URL=https://api.example.com web
-```
+The dashboard signs in with the `opensentry_session` cookie. Browsers only send that cookie to the same origin, and the API responds with `Access-Control-Allow-Origin: *` without credentials. A cross-origin `VITE_API_URL` will not receive the session cookie, so keep the dashboard and the API on one origin (nginx in Compose, the Vite proxy in local dev).
 
 ### Local Go and Vite
 
@@ -128,7 +126,9 @@ The API reads these environment variables. Compose sets the database values show
 
 `GET /healthz` returns 200 when the API can ping Postgres. It does not require a session.
 
-Accounts use email and password. Passwords are stored as bcrypt hashes and are never returned in JSON. A session is an opaque token stored only as a SHA-256 hash, valid for 14 days, sent as the `opensentry_session` cookie and as a bearer token. There is no shared `API_TOKEN`.
+Accounts use email and password. Passwords are stored as bcrypt hashes and are never returned in JSON. A session is an opaque token stored only as a SHA-256 hash, valid for 14 days, sent as the `opensentry_session` cookie and as a bearer token. There is no shared `API_TOKEN`. `POST /api/logout` does not require a live session: it deletes the token when one matches and always expires the cookie.
+
+Jobs created before accounts belong to `test-user` (`test@example.com`) and stay hidden from accounts you register later. Set `DEMO_SEED=true` and restart once to sign in as that user, or create a new account and new jobs. If `test@example.com` is already in the database, `DEMO_SEED` leaves its password unchanged (the old seed password was `secret`). A missing email is created as `opensentry-demo`.
 
 Compose does not configure an email provider. A missing `SENDGRID_API_KEY` is safe: alerts are logged and marked skipped, not failed. Create a SendGrid API key, verify the `EMAIL_FROM` sender, and set `SENDGRID_API_KEY` when you want real mail.
 

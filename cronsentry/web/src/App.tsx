@@ -26,6 +26,16 @@ async function readError(response: Response, fallback: string) {
   return text || fallback;
 }
 
+// The session cookie is HttpOnly, so a rejected session has to be cleared by
+// the API. Logout is public and always expires the cookie.
+async function forgetCookie() {
+  try {
+    await fetch(`${API_URL}/api/logout`, { method: 'POST', credentials: 'include' });
+  } catch {
+    // The sign-in form is still the right place if the network drops.
+  }
+}
+
 function App() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -45,6 +55,7 @@ function App() {
     try {
       const response = await fetch(`${API_URL}/api/jobs`, { credentials: 'include' });
       if (response.status === 401) {
+        await forgetCookie();
         setAccount(null);
         setFormError('Sign in again.');
         setLoadError(null);
@@ -73,6 +84,7 @@ function App() {
         const response = await fetch(`${API_URL}/api/me`, { credentials: 'include' });
         if (cancelled) return;
         if (!response.ok) {
+          if (response.status === 401) await forgetCookie();
           setAccount(null);
           setIsLoading(false);
           return;
@@ -95,6 +107,7 @@ function App() {
   }, [fetchJobs]);
 
   const onAuthError = useCallback(() => {
+    void forgetCookie();
     setAccount(null);
     setFormError('Sign in again.');
     setJobs([]);
@@ -133,11 +146,7 @@ function App() {
   };
 
   const logout = async () => {
-    try {
-      await fetch(`${API_URL}/api/logout`, { method: 'POST', credentials: 'include' });
-    } catch {
-      // Clearing the local session still returns the user to the sign-in form.
-    }
+    await forgetCookie();
     setAccount(null);
     setJobs([]);
     setSelectedId(null);

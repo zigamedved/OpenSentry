@@ -476,9 +476,17 @@ func TestAccounts(t *testing.T) {
 		t.Fatalf("short password = %d %q", short.StatusCode, short.Body)
 	}
 
+	stale := doAs(t, srv, "not-a-real-session", http.MethodPost, "/api/logout", "")
+	if stale.StatusCode != http.StatusNoContent || !sessionCookieCleared(stale.Header) {
+		t.Fatalf("stale logout = %d cookies %v", stale.StatusCode, stale.Header.Values("Set-Cookie"))
+	}
+	if do(t, srv, http.MethodGet, "/api/me", "").StatusCode != http.StatusOK {
+		t.Fatal("stale logout removed the real session")
+	}
+
 	loggedOut := do(t, srv, http.MethodPost, "/api/logout", "")
-	if loggedOut.StatusCode != http.StatusNoContent {
-		t.Fatalf("logout = %d %s", loggedOut.StatusCode, loggedOut.Body)
+	if loggedOut.StatusCode != http.StatusNoContent || !sessionCookieCleared(loggedOut.Header) {
+		t.Fatalf("logout = %d cookies %v body %s", loggedOut.StatusCode, loggedOut.Header.Values("Set-Cookie"), loggedOut.Body)
 	}
 	afterLogout := do(t, srv, http.MethodGet, "/api/me", "")
 	if afterLogout.StatusCode != http.StatusUnauthorized {
@@ -623,6 +631,15 @@ func ensureTestDatabase(t *testing.T) {
 	if _, err := admin.Exec(`CREATE DATABASE cronsentry_test`); err != nil && !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("create test database: %v", err)
 	}
+}
+
+func sessionCookieCleared(header http.Header) bool {
+	for _, cookie := range (&http.Response{Header: header}).Cookies() {
+		if cookie.Name == "opensentry_session" && cookie.MaxAge < 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func do(t *testing.T, srv *httptest.Server, method, path, body string) recorded {

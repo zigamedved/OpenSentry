@@ -47,8 +47,10 @@ func (s *Server) Router() http.Handler {
 	return s.corsMiddleware(s.loggingMiddleware(s.recoveryMiddleware(s.authMiddleware(mux))))
 }
 
-// publicPath is reachable without a session. Ping URLs, health, and
-// account creation stay public. Everything else under /api/ needs a session.
+// publicPath is reachable without a session. Ping URLs, health, account
+// creation, and logout stay public. Logout must run even when the session is
+// already expired so the HttpOnly cookie can be cleared. Everything else
+// under /api/ needs a session.
 func publicPath(method, path string) bool {
 	if method == http.MethodOptions {
 		return true
@@ -56,7 +58,7 @@ func publicPath(method, path string) bool {
 	if path == "/healthz" || strings.HasPrefix(path, "/api/ping/") {
 		return true
 	}
-	if method == http.MethodPost && (path == "/api/register" || path == "/api/login") {
+	if method == http.MethodPost && (path == "/api/register" || path == "/api/login" || path == "/api/logout") {
 		return true
 	}
 	return false

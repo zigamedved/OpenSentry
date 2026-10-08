@@ -58,8 +58,8 @@ func TestManagementAuth(t *testing.T) {
 		}
 	})
 
-	t.Run("register and login stay public", func(t *testing.T) {
-		for _, path := range []string{"/api/register", "/api/login"} {
+	t.Run("register login and logout stay public", func(t *testing.T) {
+		for _, path := range []string{"/api/register", "/api/login", "/api/logout"} {
 			req := httptest.NewRequest(http.MethodPost, path, nil)
 			rr := httptest.NewRecorder()
 			handler.ServeHTTP(rr, req)
