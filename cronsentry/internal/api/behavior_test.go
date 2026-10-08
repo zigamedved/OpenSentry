@@ -193,6 +193,200 @@ func TestPreflightAllowsBrowserCalls(t *testing.T) {
 	}
 }
 
+func TestJobDetailEventsPauseAndEdit(t *testing.T) {
+	srv := newBehaviorServer(t)
+	database, err := db.NewDatabase()
+	if err != nil {
+		t.Fatalf("connect test database: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	created := do(t, srv, http.MethodPost, "/api/jobs", `{
+		"name": "Nightly backup",
+		"description": "Daily database backup",
+		"schedule": "0 0 * * *",
+		"grace_time": 15
+	}`)
+	if created.StatusCode != http.StatusCreated {
+		t.Fatalf("create = %d %s", created.StatusCode, created.Body)
+	}
+	job := decodeJob(t, do(t, srv, http.MethodGet, "/api/jobs/"+decodeJob(t, created.Body).ID, "").Body)
+
+	empty := do(t, srv, http.MethodGet, "/api/jobs/"+job.ID+"/events", "")
+	if empty.StatusCode != http.StatusOK || strings.TrimSpace(empty.Body) != "[]" {
+		t.Fatalf("empty events = %d %q", empty.StatusCode, empty.Body)
+	}
+
+	unauthReq, err := http.NewRequest(http.MethodGet, srv.URL+"/api/jobs/"+job.ID+"/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unauthResp, err := http.DefaultClient.Do(unauthReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unauthResp.Body.Close()
+	if unauthResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated events = %d", unauthResp.StatusCode)
+	}
+
+	missing := do(t, srv, http.MethodGet, "/api/jobs/does-not-exist/events", "")
+	if missing.StatusCode != http.StatusNotFound || strings.TrimSpace(missing.Body) != "Job not found" {
+		t.Fatalf("unknown events = %d %q", missing.StatusCode, missing.Body)
+	}
+
+	pinged := do(t, srv, http.MethodPost, "/api/ping/"+job.ID, "")
+	if pinged.StatusCode != http.StatusOK {
+		t.Fatalf("ping = %d %s", pinged.StatusCode, pinged.Body)
+	}
+	events := decodeEvents(t, do(t, srv, http.MethodGet, "/api/jobs/"+job.ID+"/events?limit=1", "").Body)
+	if len(events) != 1 || events[0].Type != models.TypePing || events[0].JobID != job.ID {
+		t.Fatalf("events = %+v", events)
+	}
+
+	beforePause := decodeJob(t, do(t, srv, http.MethodGet, "/api/jobs/"+job.ID, "").Body)
+	paused := do(t, srv, http.MethodPut, "/api/jobs/"+job.ID, `{"status":"paused"}`)
+	if paused.StatusCode != http.StatusOK {
+		t.Fatalf("pause = %d %s", paused.StatusCode, paused.Body)
+	}
+	afterPause := decodeJob(t, paused.Body)
+	if afterPause.Status != models.StatusPaused {
+		t.Fatalf("status = %s", afterPause.Status)
+	}
+	if !afterPause.NextExpect.Equal(beforePause.NextExpect) || !afterPause.LastPing.Equal(beforePause.LastPing) {
+		t.Fatalf("pause changed timing: next %s -> %s last %s -> %s", beforePause.NextExpect, afterPause.NextExpect, beforePause.LastPing, afterPause.LastPing)
+	}
+
+	if pinged := do(t, srv, http.MethodPost, "/api/ping/"+job.ID, ""); pinged.StatusCode != http.StatusOK {
+		t.Fatalf("ping while paused = %d", pinged.StatusCode)
+	}
+	stillPaused := decodeJob(t, do(t, srv, http.MethodGet, "/api/jobs/"+job.ID, "").Body)
+	if stillPaused.Status != models.StatusPaused {
+		t.Fatalf("ping resumed the job: %s", stillPaused.Status)
+	}
+
+	stale := time.Now().UTC().Add(-48 * time.Hour)
+	if _, err := database.GetDB().Exec(`UPDATE jobs SET next_expect = $1 WHERE id = $2`, stale, job.ID); err != nil {
+		t.Fatalf("set stale next_expect: %v", err)
+	}
+	resumed := do(t, srv, http.MethodPut, "/api/jobs/"+job.ID, `{"status":"healthy"}`)
+	if resumed.StatusCode != http.StatusOK {
+		t.Fatalf("resume = %d %s", resumed.StatusCode, resumed.Body)
+	}
+	afterResume := decodeJob(t, resumed.Body)
+	if afterResume.Status != models.StatusHealthy {
+		t.Fatalf("status = %s", afterResume.Status)
+	}
+	if afterResume.NextExpect.Before(time.Now().UTC().Add(-2 * time.Second)) {
+		t.Fatalf("resume left next_expect in the past: %s", afterResume.NextExpect)
+	}
+	if afterResume.LastPing.Before(stillPaused.LastPing) {
+		t.Fatal("resume moved last_ping backwards")
+	}
+
+	edited := do(t, srv, http.MethodPut, "/api/jobs/"+job.ID, `{
+		"name": "Morning backup",
+		"description": "",
+		"schedule": "0 12 * * *",
+		"grace_time": 20
+	}`)
+	if edited.StatusCode != http.StatusOK {
+		t.Fatalf("edit = %d %s", edited.StatusCode, edited.Body)
+	}
+	afterEdit := decodeJob(t, edited.Body)
+	if afterEdit.Name != "Morning backup" || afterEdit.Description != "" || afterEdit.Schedule != "0 12 * * *" || afterEdit.GraceTime != 20 {
+		t.Fatalf("edit = %+v", afterEdit)
+	}
+	if afterEdit.NextExpect.Equal(afterResume.NextExpect) {
+		t.Fatal("schedule edit left next_expect unchanged")
+	}
+
+	badStatus := do(t, srv, http.MethodPut, "/api/jobs/"+job.ID, `{"status":"asleep"}`)
+	if badStatus.StatusCode != http.StatusBadRequest || strings.TrimSpace(badStatus.Body) != "Invalid status" {
+		t.Fatalf("bad status = %d %q", badStatus.StatusCode, badStatus.Body)
+	}
+	if decodeJob(t, do(t, srv, http.MethodGet, "/api/jobs/"+job.ID, "").Body).Status != models.StatusHealthy {
+		t.Fatal("invalid status was saved")
+	}
+
+	badGrace := do(t, srv, http.MethodPut, "/api/jobs/"+job.ID, `{"grace_time":0}`)
+	if badGrace.StatusCode != http.StatusBadRequest || strings.TrimSpace(badGrace.Body) != "Grace time must be positive" {
+		t.Fatalf("bad grace = %d %q", badGrace.StatusCode, badGrace.Body)
+	}
+
+	forced := do(t, srv, http.MethodPut, "/api/jobs/"+job.ID, `{"status":"missing"}`)
+	if forced.StatusCode != http.StatusBadRequest || strings.TrimSpace(forced.Body) != "Invalid status" {
+		t.Fatalf("force missing = %d %q", forced.StatusCode, forced.Body)
+	}
+	if decodeJob(t, do(t, srv, http.MethodGet, "/api/jobs/"+job.ID, "").Body).Status != models.StatusHealthy {
+		t.Fatal("client marked the job missing")
+	}
+}
+
+func TestOtherUsersJobLooksMissing(t *testing.T) {
+	srv := newBehaviorServer(t)
+	database, err := db.NewDatabase()
+	if err != nil {
+		t.Fatalf("connect test database: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+
+	if _, err := database.GetDB().Exec(`
+		INSERT INTO users (id, email, name, password_hash, created_at, updated_at)
+		VALUES ('other-user', 'other@example.com', 'Other', 'x', NOW(), NOW())
+		ON CONFLICT (id) DO NOTHING
+	`); err != nil {
+		t.Fatalf("insert user: %v", err)
+	}
+	other := &models.Job{
+		Name:       "Someone else",
+		Schedule:   "0 0 * * *",
+		GraceTime:  5,
+		Status:     models.StatusHealthy,
+		LastPing:   time.Now().UTC(),
+		NextExpect: time.Now().UTC().Add(time.Hour),
+		UserID:     "other-user",
+	}
+	if err := database.CreateJob(other); err != nil {
+		t.Fatalf("create other job: %v", err)
+	}
+
+	for _, tc := range []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{http.MethodGet, "/api/jobs/" + other.ID, ""},
+		{http.MethodGet, "/api/jobs/" + other.ID + "/events", ""},
+		{http.MethodPut, "/api/jobs/" + other.ID, `{"name":"taken"}`},
+		{http.MethodDelete, "/api/jobs/" + other.ID, ""},
+	} {
+		resp := do(t, srv, tc.method, tc.path, tc.body)
+		if resp.StatusCode != http.StatusNotFound || strings.TrimSpace(resp.Body) != "Job not found" {
+			t.Fatalf("%s %s = %d %q", tc.method, tc.path, resp.StatusCode, resp.Body)
+		}
+	}
+
+	stillThere, err := database.GetJob(other.ID)
+	if err != nil || stillThere == nil || stillThere.Name != "Someone else" {
+		t.Fatalf("other job changed: %+v %v", stillThere, err)
+	}
+
+	pinged := do(t, srv, http.MethodPost, "/api/ping/"+other.ID, "")
+	if pinged.StatusCode != http.StatusOK || pinged.Body != `{"status":"ok"}` {
+		t.Fatalf("ping other job = %d %q", pinged.StatusCode, pinged.Body)
+	}
+}
+
+func decodeEvents(t *testing.T, body string) []models.JobEvent {
+	t.Helper()
+	var events []models.JobEvent
+	if err := json.Unmarshal([]byte(body), &events); err != nil {
+		t.Fatalf("decode events %q: %v", body, err)
+	}
+	return events
+}
+
 type recorded struct {
 	StatusCode int
 	Header     http.Header

@@ -157,3 +157,61 @@ func TestApplyScheduleChange(t *testing.T) {
 		}
 	})
 }
+
+func TestApplyStatusChange(t *testing.T) {
+	t.Run("resume from paused recomputes next_expect", func(t *testing.T) {
+		job := &models.Job{
+			Status:     models.StatusPaused,
+			Schedule:   "0 0 * * *",
+			NextExpect: time.Now().UTC().Add(-48 * time.Hour),
+			LastPing:   time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		}
+		lastPing := job.LastPing
+		if err := applyStatusChange(job, "healthy"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if job.Status != models.StatusHealthy {
+			t.Fatalf("status = %s", job.Status)
+		}
+		if job.NextExpect.Before(time.Now().UTC().Add(-2 * time.Second)) {
+			t.Fatalf("resume left next_expect in the past: %s", job.NextExpect)
+		}
+		if !job.LastPing.Equal(lastPing) {
+			t.Fatal("resume reset last_ping")
+		}
+	})
+
+	t.Run("pause keeps next_expect", func(t *testing.T) {
+		next := time.Now().UTC().Add(time.Hour)
+		job := &models.Job{Status: models.StatusHealthy, Schedule: "0 0 * * *", NextExpect: next}
+		if err := applyStatusChange(job, "paused"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if job.Status != models.StatusPaused {
+			t.Fatalf("status = %s", job.Status)
+		}
+		if !job.NextExpect.Equal(next) {
+			t.Fatal("pause changed next_expect")
+		}
+	})
+
+	t.Run("invalid status rejected", func(t *testing.T) {
+		job := &models.Job{Status: models.StatusHealthy, Schedule: "0 0 * * *"}
+		if err := applyStatusChange(job, "asleep"); err == nil {
+			t.Fatal("expected error for invalid status")
+		}
+		if job.Status != models.StatusHealthy {
+			t.Fatalf("status changed to %s", job.Status)
+		}
+	})
+
+	t.Run("client cannot force missing", func(t *testing.T) {
+		job := &models.Job{Status: models.StatusHealthy, Schedule: "0 0 * * *"}
+		if err := applyStatusChange(job, string(models.StatusMissing)); err == nil {
+			t.Fatal("expected error for missing status")
+		}
+		if job.Status != models.StatusHealthy {
+			t.Fatalf("status = %s", job.Status)
+		}
+	})
+}
