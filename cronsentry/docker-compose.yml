@@ -2,14 +2,14 @@ services:
   app:
     build: .
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     depends_on:
       - db
     environment:
       - DB_HOST=db
       - DB_PORT=5432
       - DB_USER=postgres
-      - DB_PASSWORD=postgres
+      - DB_PASSWORD=${POSTGRES_PASSWORD:-postgres}
       - DB_NAME=cronsentry
       - DB_SSLMODE=disable
       # Optional. When true, seed test@example.com / opensentry-demo and attach env webhooks to that user.
@@ -25,10 +25,10 @@ services:
   db:
     image: postgres:15-alpine
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     environment:
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-postgres}
       - POSTGRES_DB=cronsentry
     volumes:
       - pg_data:/var/lib/postgresql/data
@@ -42,7 +42,7 @@ services:
       args:
         VITE_API_URL: ${VITE_API_URL:-}
     ports:
-      - "3000:80"
+      - "127.0.0.1:3000:80"
     depends_on:
       - app
 

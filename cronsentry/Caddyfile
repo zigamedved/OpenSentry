@@ -1,0 +1,5 @@
+# SITE_ADDRESS is the public hostname, for example monitor.example.com.
+# Caddy obtains a certificate and sets X-Forwarded-Proto for the app.
+{$SITE_ADDRESS} {
+	reverse_proxy web:80
+}
