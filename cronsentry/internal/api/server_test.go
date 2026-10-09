@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -95,6 +96,19 @@ func TestManagementAuth(t *testing.T) {
 			t.Fatalf("status = %d, want 204", rr.Code)
 		}
 	})
+}
+
+func TestHealthzDatabaseDown(t *testing.T) {
+	s := NewServer(nil, log.New(io.Discard, "", 0))
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rr := httptest.NewRecorder()
+	s.handleHealth(rr, req)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rr.Code)
+	}
+	if strings.TrimSpace(rr.Body.String()) != "database unavailable" {
+		t.Fatalf("body = %q", rr.Body.String())
+	}
 }
 
 func TestPingHTTPStatus(t *testing.T) {

@@ -1,0 +1,28 @@
+# Public HTTPS in front of the Compose stack.
+#   SITE_ADDRESS=monitor.example.com
+#   DASHBOARD_URL=https://monitor.example.com
+#   POSTGRES_PASSWORD="$(openssl rand -hex 24)"
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+services:
+  app:
+    environment:
+      DASHBOARD_URL: ${DASHBOARD_URL:?Set DASHBOARD_URL to https://your-domain}
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?Set SITE_ADDRESS to your domain}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+
+volumes:
+  caddy_data:
+  caddy_config:

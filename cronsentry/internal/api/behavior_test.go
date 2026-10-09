@@ -179,6 +179,17 @@ func TestJobAPIRejectsInvalidInput(t *testing.T) {
 	}
 }
 
+func TestHealthzReportsDatabase(t *testing.T) {
+	srv := newBehaviorServer(t)
+	resp := doAs(t, srv, "", http.MethodGet, "/healthz", "")
+	if resp.StatusCode != http.StatusOK || strings.TrimSpace(resp.Body) != `{"status":"ok"}` {
+		t.Fatalf("healthz = %d %q", resp.StatusCode, resp.Body)
+	}
+	if resp.Header.Get("Content-Type") != "application/json" {
+		t.Fatalf("content-type = %q", resp.Header.Get("Content-Type"))
+	}
+}
+
 func TestPreflightAllowsBrowserCalls(t *testing.T) {
 	srv := newBehaviorServer(t)
 	resp := do(t, srv, http.MethodOptions, "/api/jobs", "")

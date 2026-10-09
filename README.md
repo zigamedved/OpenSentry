@@ -15,7 +15,7 @@ The Go module and Docker app live in [`cronsentry/`](cronsentry/). That director
 - **Email Notifications**: Get notified when jobs fail to run (SendGrid when configured; otherwise dry-run)
 - **Status Dashboard**: View the health of all your jobs in one place
 - **Slack and Discord**: Incoming webhooks for miss and recovery alerts
-- **Authentication**: Authentication via TBD // In progress
+- **Accounts**: Email and password. Each account sees only its own jobs.
 
 ## Dashboard
 
@@ -115,7 +115,7 @@ The API reads these environment variables. Compose sets the database values show
 | `DB_USER` | `postgres` | Postgres user |
 | `DB_PASSWORD` | `postgres` | Postgres password |
 | `DB_NAME` | `cronsentry` | Database name |
-| `DB_SSLMODE` | `disable` | lib/pq SSL mode. Use `require` for hosted Postgres. |
+| `DB_SSLMODE` | `disable` | lib/pq SSL mode. `disable` for the Compose Postgres container. `require` (or `verify-full` with a CA) for a database reached over the internet. |
 | `PORT` | `8080` | API listen port |
 | `DEMO_SEED` | unset | When `true`, create `test@example.com` / `opensentry-demo` if that email is missing, and attach the Slack and Discord env webhooks to that user. |
 | `SENDGRID_API_KEY` | unset | When set, missing-job email is sent through SendGrid. When unset, the API logs `would send` and marks the notification `skipped`. |
@@ -124,7 +124,7 @@ The API reads these environment variables. Compose sets the database values show
 | `SLACK_WEBHOOK_URL` | unset | Slack incoming webhook for the self-host user. Saved on startup when set. |
 | `DISCORD_WEBHOOK_URL` | unset | Discord webhook for the self-host user. Saved on startup when set. |
 
-`GET /healthz` returns 200 when the API can ping Postgres. It does not require a session.
+`GET /healthz` returns 200 `{"status":"ok"}` when the API can ping Postgres, and 503 when it cannot. It does not require a session. The nginx dashboard proxies `/healthz` to the API so an orchestrator can probe the public site.
 
 Accounts use email and password. Passwords are stored as bcrypt hashes and are never returned in JSON. A session is an opaque token stored only as a SHA-256 hash, valid for 14 days, sent as the `opensentry_session` cookie and as a bearer token. There is no shared `API_TOKEN`. `POST /api/logout` does not require a live session: it deletes the token when one matches and always expires the cookie.
 
@@ -151,6 +151,34 @@ Discord:
 ```json
 {"content":"OpenSentry: Job 'Nightly backup' has missed its scheduled run time\nJob: Nightly backup\nWhen: Tue, 07 Oct 2026 12:00:00 UTC\nDashboard: https://monitor.example"}
 ```
+
+## Production on a VPS
+
+One VM, a domain, and Docker. Caddy terminates HTTPS and proxies to the nginx dashboard. nginx serves the built UI and proxies `/api/` and `/healthz` to the Go API. Postgres stays on the Compose network. Its published port, and the API and dashboard ports, bind to `127.0.0.1` only.
+
+1. Point DNS for your domain at the VM and open TCP 80 and 443.
+2. On the VM:
+
+```bash
+git clone https://github.com/zigamedved/OpenSentry.git
+cd OpenSentry/cronsentry
+export SITE_ADDRESS=monitor.example.com
+export DASHBOARD_URL=https://monitor.example.com
+export POSTGRES_PASSWORD="$(openssl rand -hex 24)"
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+Compose reads those variables from the environment or from a `.env` file in `cronsentry/`. Do not commit `.env`. `POSTGRES_PASSWORD` is the password for both the database container and the API. Leave `SENDGRID_API_KEY` unset to keep email in dry-run, or set it with a verified `EMAIL_FROM`.
+
+3. Open `https://monitor.example.com`, create an account, and copy a ping command from a job card. `GET https://monitor.example.com/healthz` is the probe: 200 when Postgres answers, 503 when it does not.
+
+Caddy gets a Let's Encrypt certificate for `SITE_ADDRESS` and sends `X-Forwarded-Proto: https`. nginx forwards that header, and the API marks the session cookie `Secure`.
+
+The bundled Postgres image does not speak TLS. Leave `DB_SSLMODE=disable` for it. The connection stays on the Docker network.
+
+For a hosted Postgres service, set `DB_HOST` to that host and `DB_SSLMODE=require` so the session is encrypted. Use `verify-full` when the provider supplies a CA (`sslrootcert`). `require` encrypts without checking the server certificate. Do not use `disable` for a database reached over the internet. `verify-ca` checks the CA and not the hostname.
+
+Local Compose is unchanged aside from listening on localhost: `http://localhost:3000` for the dashboard and `http://localhost:8080` for the API. The database password defaults to `postgres` when `POSTGRES_PASSWORD` is unset.
 
 ## License
 
