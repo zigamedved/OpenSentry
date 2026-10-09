@@ -78,6 +78,9 @@ func TestJobLifecycleMatchesCurrentBehavior(t *testing.T) {
 	if job.UserID != behaviorUserID {
 		t.Fatalf("user_id = %q, want %q", job.UserID, behaviorUserID)
 	}
+	if job.PingToken == "" || job.PingToken == job.ID {
+		t.Fatalf("ping_token = %q, id = %q", job.PingToken, job.ID)
+	}
 	if job.NextExpect.Before(time.Now().UTC().Add(-2 * time.Second)) {
 		t.Fatalf("next_expect = %s", job.NextExpect)
 	}
@@ -99,7 +102,11 @@ func TestJobLifecycleMatchesCurrentBehavior(t *testing.T) {
 		t.Fatal("get returned a different job")
 	}
 
-	pinged := do(t, srv, http.MethodPost, "/api/ping/"+job.ID, "")
+	byID := do(t, srv, http.MethodPost, "/api/ping/"+job.ID, "")
+	if byID.StatusCode != http.StatusNotFound || strings.TrimSpace(byID.Body) != "Job not found" {
+		t.Fatalf("ping by job id = %d %q", byID.StatusCode, byID.Body)
+	}
+	pinged := do(t, srv, http.MethodPost, "/api/ping/"+job.PingToken, "")
 	if pinged.StatusCode != http.StatusOK || pinged.Body != `{"status":"ok"}` {
 		t.Fatalf("ping = %d %q", pinged.StatusCode, pinged.Body)
 	}
@@ -130,6 +137,9 @@ func TestJobLifecycleMatchesCurrentBehavior(t *testing.T) {
 	}
 	if afterUpdate.Name != "Nightly backup" || afterUpdate.GraceTime != 15 {
 		t.Fatalf("update changed unrelated fields: %+v", afterUpdate)
+	}
+	if afterUpdate.PingToken != job.PingToken {
+		t.Fatalf("update changed ping token %q -> %q", job.PingToken, afterUpdate.PingToken)
 	}
 
 	deleted := do(t, srv, http.MethodDelete, "/api/jobs/"+job.ID, "")
@@ -246,7 +256,7 @@ func TestJobDetailEventsPauseAndEdit(t *testing.T) {
 		t.Fatalf("unknown events = %d %q", missing.StatusCode, missing.Body)
 	}
 
-	pinged := do(t, srv, http.MethodPost, "/api/ping/"+job.ID, "")
+	pinged := do(t, srv, http.MethodPost, "/api/ping/"+job.PingToken, "")
 	if pinged.StatusCode != http.StatusOK {
 		t.Fatalf("ping = %d %s", pinged.StatusCode, pinged.Body)
 	}
@@ -268,7 +278,7 @@ func TestJobDetailEventsPauseAndEdit(t *testing.T) {
 		t.Fatalf("pause changed timing: next %s -> %s last %s -> %s", beforePause.NextExpect, afterPause.NextExpect, beforePause.LastPing, afterPause.LastPing)
 	}
 
-	if pinged := do(t, srv, http.MethodPost, "/api/ping/"+job.ID, ""); pinged.StatusCode != http.StatusOK {
+	if pinged := do(t, srv, http.MethodPost, "/api/ping/"+job.PingToken, ""); pinged.StatusCode != http.StatusOK {
 		t.Fatalf("ping while paused = %d", pinged.StatusCode)
 	}
 	stillPaused := decodeJob(t, do(t, srv, http.MethodGet, "/api/jobs/"+job.ID, "").Body)
@@ -383,9 +393,98 @@ func TestOtherUsersJobLooksMissing(t *testing.T) {
 		t.Fatalf("other job changed: %+v %v", stillThere, err)
 	}
 
-	pinged := do(t, srv, http.MethodPost, "/api/ping/"+other.ID, "")
+	pinged := do(t, srv, http.MethodPost, "/api/ping/"+other.PingToken, "")
 	if pinged.StatusCode != http.StatusOK || pinged.Body != `{"status":"ok"}` {
 		t.Fatalf("ping other job = %d %q", pinged.StatusCode, pinged.Body)
+	}
+}
+
+func TestRotatePingToken(t *testing.T) {
+	srv := newBehaviorServer(t)
+	created := do(t, srv, http.MethodPost, "/api/jobs", `{"name":"Rotate me","schedule":"0 0 * * *","grace_time":5}`)
+	if created.StatusCode != http.StatusCreated {
+		t.Fatalf("create = %d %s", created.StatusCode, created.Body)
+	}
+	job := decodeJob(t, created.Body)
+	if pinged := do(t, srv, http.MethodPost, "/api/ping/"+job.PingToken, ""); pinged.StatusCode != http.StatusOK {
+		t.Fatalf("ping before rotate = %d %s", pinged.StatusCode, pinged.Body)
+	}
+
+	rotated := do(t, srv, http.MethodPost, "/api/jobs/"+job.ID+"/rotate-ping", "")
+	if rotated.StatusCode != http.StatusOK {
+		t.Fatalf("rotate = %d %s", rotated.StatusCode, rotated.Body)
+	}
+	next := decodeJob(t, rotated.Body)
+	if next.ID != job.ID || next.PingToken == "" || next.PingToken == job.PingToken {
+		t.Fatalf("rotated job = %+v", next)
+	}
+	old := do(t, srv, http.MethodPost, "/api/ping/"+job.PingToken, "")
+	if old.StatusCode != http.StatusNotFound || strings.TrimSpace(old.Body) != "Job not found" {
+		t.Fatalf("old ping = %d %q", old.StatusCode, old.Body)
+	}
+	if pinged := do(t, srv, http.MethodPost, "/api/ping/"+next.PingToken, ""); pinged.StatusCode != http.StatusOK {
+		t.Fatalf("new ping = %d %s", pinged.StatusCode, pinged.Body)
+	}
+
+	other := doAs(t, srv, "", http.MethodPost, "/api/register", `{
+		"email": "rotate-other@example.com",
+		"password": "other-pass",
+		"name": "Other"
+	}`)
+	if other.StatusCode != http.StatusCreated {
+		t.Fatalf("register = %d %s", other.StatusCode, other.Body)
+	}
+	var session struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal([]byte(other.Body), &session); err != nil {
+		t.Fatal(err)
+	}
+	denied := doAs(t, srv, session.Token, http.MethodPost, "/api/jobs/"+job.ID+"/rotate-ping", "")
+	if denied.StatusCode != http.StatusNotFound || strings.TrimSpace(denied.Body) != "Job not found" {
+		t.Fatalf("other rotate = %d %q", denied.StatusCode, denied.Body)
+	}
+	still := decodeJob(t, do(t, srv, http.MethodGet, "/api/jobs/"+job.ID, "").Body)
+	if still.PingToken != next.PingToken {
+		t.Fatalf("other user changed token %q -> %q", next.PingToken, still.PingToken)
+	}
+}
+
+func TestPingRateLimit(t *testing.T) {
+	restore := setLimits(t, 100, 2, 120, 20)
+	t.Cleanup(restore)
+
+	srv := newBehaviorServer(t)
+	create := func(name string) models.Job {
+		t.Helper()
+		resp := do(t, srv, http.MethodPost, "/api/jobs", `{"name":"`+name+`","schedule":"0 0 * * *","grace_time":5}`)
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("create %s = %d %s", name, resp.StatusCode, resp.Body)
+		}
+		return decodeJob(t, resp.Body)
+	}
+	first := create("Limited")
+	second := create("Other cron")
+	for i := 0; i < 2; i++ {
+		pinged := do(t, srv, http.MethodPost, "/api/ping/"+first.PingToken, "")
+		if pinged.StatusCode != http.StatusOK {
+			t.Fatalf("ping %d = %d %s", i, pinged.StatusCode, pinged.Body)
+		}
+	}
+	limited := do(t, srv, http.MethodPost, "/api/ping/"+first.PingToken, "")
+	if limited.StatusCode != http.StatusTooManyRequests || strings.TrimSpace(limited.Body) != "Too Many Requests" {
+		t.Fatalf("limited ping = %d %q", limited.StatusCode, limited.Body)
+	}
+	if limited.Header.Get("Retry-After") != "60" {
+		t.Fatalf("Retry-After = %q", limited.Header.Get("Retry-After"))
+	}
+	other := do(t, srv, http.MethodPost, "/api/ping/"+second.PingToken, "")
+	if other.StatusCode != http.StatusOK {
+		t.Fatalf("second job ping = %d %s", other.StatusCode, other.Body)
+	}
+	health := do(t, srv, http.MethodGet, "/healthz", "")
+	if health.StatusCode != http.StatusOK {
+		t.Fatalf("healthz = %d %s", health.StatusCode, health.Body)
 	}
 }
 

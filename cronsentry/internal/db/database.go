@@ -63,13 +63,17 @@ func (d *Database) Close() error {
 	return d.db.Close()
 }
 
-func (d *Database) scanJob(row *sql.Row) (*models.Job, error) {
-	var job models.Job
-	err := row.Scan(
+func scanJobFields(job *models.Job) []any {
+	return []any{
 		&job.ID, &job.Name, &job.Description, &job.Schedule,
 		&job.GraceTime, &job.LastPing, &job.NextExpect,
-		&job.Status, &job.UserID, &job.CreatedAt, &job.UpdatedAt,
-	)
+		&job.Status, &job.UserID, &job.CreatedAt, &job.UpdatedAt, &job.PingToken,
+	}
+}
+
+func (d *Database) scanJob(row *sql.Row) (*models.Job, error) {
+	var job models.Job
+	err := row.Scan(scanJobFields(&job)...)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
@@ -81,7 +85,7 @@ func (d *Database) scanJob(row *sql.Row) (*models.Job, error) {
 
 const jobSelect = `
 	SELECT id, name, description, schedule, grace_time,
-	       last_ping, next_expect, status, user_id, created_at, updated_at
+	       last_ping, next_expect, status, user_id, created_at, updated_at, ping_token
 	FROM jobs
 `
 
@@ -95,15 +99,12 @@ func (d *Database) GetJobForUser(id, userID string) (*models.Job, error) {
 	return d.scanJob(d.db.QueryRow(jobSelect+` WHERE id = $1 AND user_id = $2`, id, userID))
 }
 
+func (d *Database) GetJobByPingToken(token string) (*models.Job, error) {
+	return d.scanJob(d.db.QueryRow(jobSelect+` WHERE ping_token = $1`, token))
+}
+
 func (d *Database) ListJobsByUser(userID string) ([]*models.Job, error) {
-	query := `
-		SELECT id, name, description, schedule, grace_time, 
-		       last_ping, next_expect, status, user_id, created_at, updated_at
-		FROM jobs
-		WHERE user_id = $1
-		ORDER BY created_at DESC
-	`
-	rows, err := d.db.Query(query, userID)
+	rows, err := d.db.Query(jobSelect+` WHERE user_id = $1 ORDER BY created_at DESC`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("error querying jobs: %w", err)
 	}
@@ -112,12 +113,7 @@ func (d *Database) ListJobsByUser(userID string) ([]*models.Job, error) {
 	var jobs []*models.Job
 	for rows.Next() {
 		var job models.Job
-		err := rows.Scan(
-			&job.ID, &job.Name, &job.Description, &job.Schedule,
-			&job.GraceTime, &job.LastPing, &job.NextExpect,
-			&job.Status, &job.UserID, &job.CreatedAt, &job.UpdatedAt,
-		)
-		if err != nil {
+		if err := rows.Scan(scanJobFields(&job)...); err != nil {
 			return nil, fmt.Errorf("error scanning job row: %w", err)
 		}
 		jobs = append(jobs, &job)
@@ -134,20 +130,23 @@ func (d *Database) CreateJob(job *models.Job) error {
 	if job.ID == "" {
 		job.ID = uuid.New().String()
 	}
+	if job.PingToken == "" {
+		job.PingToken = uuid.New().String()
+	}
 
 	now := time.Now().UTC()
 	job.CreatedAt = now
 	job.UpdatedAt = now
 
 	query := `
-		INSERT INTO jobs (id, name, description, schedule, grace_time, 
-		                 last_ping, next_expect, status, user_id, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		INSERT INTO jobs (id, name, description, schedule, grace_time,
+		                 last_ping, next_expect, status, user_id, created_at, updated_at, ping_token)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	`
 	_, err := d.db.Exec(query,
 		job.ID, job.Name, job.Description, job.Schedule,
 		job.GraceTime, job.LastPing, job.NextExpect,
-		job.Status, job.UserID, job.CreatedAt, job.UpdatedAt,
+		job.Status, job.UserID, job.CreatedAt, job.UpdatedAt, job.PingToken,
 	)
 	if err != nil {
 		return fmt.Errorf("error creating job: %w", err)
@@ -187,10 +186,31 @@ func (d *Database) UpdateJob(job *models.Job) error {
 	return nil
 }
 
-func (d *Database) RecordPing(jobID string) error {
+func (d *Database) RotatePingToken(id, userID string) (*models.Job, error) {
+	token := uuid.New().String()
+	now := time.Now().UTC()
+	result, err := d.db.Exec(`
+		UPDATE jobs
+		SET ping_token = $1, updated_at = $2
+		WHERE id = $3 AND user_id = $4
+	`, token, now, id, userID)
+	if err != nil {
+		return nil, fmt.Errorf("error rotating ping token: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return nil, fmt.Errorf("error getting rows affected: %w", err)
+	}
+	if rows == 0 {
+		return nil, ErrJobNotFound
+	}
+	return requireJob(d.GetJobForUser(id, userID))
+}
+
+func (d *Database) RecordPing(token string) error {
 	now := time.Now().UTC()
 
-	job, err := requireJob(d.GetJob(jobID))
+	job, err := requireJob(d.GetJobByPingToken(token))
 	if err != nil {
 		if errors.Is(err, ErrJobNotFound) {
 			return err
@@ -215,7 +235,7 @@ func (d *Database) RecordPing(jobID string) error {
 	`
 
 	var currentStatus models.JobStatus
-	err = tx.QueryRow(query, now, nextTick, jobID).Scan(&currentStatus)
+	err = tx.QueryRow(query, now, nextTick, job.ID).Scan(&currentStatus)
 	if err != nil {
 		tx.Rollback()
 		if err == sql.ErrNoRows {
@@ -234,7 +254,7 @@ func (d *Database) RecordPing(jobID string) error {
 			UPDATE jobs
 			SET status = $1
 			WHERE id = $2
-		`, models.StatusHealthy, jobID)
+		`, models.StatusHealthy, job.ID)
 
 		if err != nil {
 			tx.Rollback()
@@ -245,7 +265,7 @@ func (d *Database) RecordPing(jobID string) error {
 	_, err = tx.Exec(`
 		INSERT INTO job_events (id, job_id, type, data, created_at)
 		VALUES ($1, $2, $3, $4, $5)
-	`, eventID, jobID, eventType, "{}", now)
+	`, eventID, job.ID, eventType, "{}", now)
 
 	if err != nil {
 		tx.Rollback()

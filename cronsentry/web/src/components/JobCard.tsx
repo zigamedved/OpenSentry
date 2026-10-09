@@ -8,9 +8,9 @@ interface JobCardProps {
   onDelete: (id: string) => Promise<string | null>;
 }
 
-export function pingCurl(apiOrigin: string, jobId: string) {
+export function pingCurl(apiOrigin: string, pingToken: string) {
   const root = apiOrigin.replace(/\/$/, '');
-  return `curl -X POST ${root}/api/ping/${jobId}`;
+  return `curl -X POST ${root}/api/ping/${pingToken}`;
 }
 
 const statusColors: Record<string, string> = {
@@ -20,14 +20,14 @@ const statusColors: Record<string, string> = {
   paused: 'bg-gray-100 text-gray-800',
 };
 
-export function PingCommand({ apiOrigin, jobId }: { apiOrigin: string; jobId: string }) {
+export function PingCommand({ apiOrigin, pingToken }: { apiOrigin: string; pingToken: string }) {
   const [copied, setCopied] = useState(false);
-  const curl = pingCurl(apiOrigin, jobId);
+  const curl = pingCurl(apiOrigin, pingToken);
 
   return (
     <div>
       <p className="text-xs font-medium text-gray-500">Ping command</p>
-      <p className="mt-1 text-xs text-gray-500">The job id in this URL is a secret. Anyone who has it can record a ping.</p>
+      <p className="mt-1 text-xs text-gray-500">Treat this URL like a password. Do not commit it, paste it in chat, or put it in a screenshot. Anyone who has it can record a ping.</p>
       <div className="mt-2 flex items-center gap-2">
         <code className="block flex-1 overflow-x-auto rounded bg-gray-50 px-2 py-1 text-xs text-gray-800">{curl}</code>
         <button
@@ -86,7 +86,7 @@ export function JobCard({ job, apiOrigin, onOpen, onDelete }: JobCardProps) {
       </div>
 
       <div className="mt-4">
-        <PingCommand apiOrigin={apiOrigin} jobId={job.id} />
+        <PingCommand apiOrigin={apiOrigin} pingToken={job.ping_token} />
       </div>
 
       {deleteError ? <p className="mt-3 text-sm text-red-600">{deleteError}</p> : null}

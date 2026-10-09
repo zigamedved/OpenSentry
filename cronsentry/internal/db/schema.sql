@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     next_expect TIMESTAMPTZ,
     status VARCHAR(50) NOT NULL DEFAULT 'healthy',
     user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    ping_token VARCHAR(64) NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );
@@ -45,6 +46,13 @@ CREATE TABLE IF NOT EXISTS notifications (
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS data JSONB DEFAULT '{}';
 
 CREATE INDEX IF NOT EXISTS idx_jobs_user_id ON jobs(user_id);
+
+-- Jobs created before ping tokens used the job id as the ping URL.
+-- Keep that URL until the owner rotates it.
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS ping_token VARCHAR(64);
+UPDATE jobs SET ping_token = id WHERE ping_token IS NULL OR ping_token = '';
+ALTER TABLE jobs ALTER COLUMN ping_token SET NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_ping_token ON jobs (ping_token);
 CREATE INDEX IF NOT EXISTS idx_job_events_job_id ON job_events(job_id);
 CREATE INDEX IF NOT EXISTS idx_job_events_created_at ON job_events(created_at);
 CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);
