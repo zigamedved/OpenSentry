@@ -205,7 +205,7 @@ export function JobDetail({ jobId, apiUrl, apiOrigin, onBack, onDelete, onAuthEr
           </dl>
 
           <div className="mt-6">
-            <PingCommand apiOrigin={apiOrigin} jobId={job.id} />
+            <PingCommand apiOrigin={apiOrigin} pingToken={job.ping_token} />
           </div>
 
           {actionError ? <p className="mt-4 text-sm text-red-600">{actionError}</p> : null}
@@ -230,6 +230,38 @@ export function JobDetail({ jobId, apiUrl, apiOrigin, onBack, onDelete, onAuthEr
                 Pause
               </button>
             )}
+            <button
+              type="button"
+              disabled={saving}
+              onClick={async () => {
+                if (!window.confirm('Rotate the ping URL? The current cron command stops working immediately.')) return;
+                setSaving(true);
+                setActionError(null);
+                try {
+                  const response = await fetch(`${apiUrl}/api/jobs/${jobId}/rotate-ping`, {
+                    method: 'POST',
+                    credentials: 'include',
+                  });
+                  if (response.status === 401) {
+                    onAuthError();
+                    setActionError('Sign in again.');
+                    return;
+                  }
+                  if (!response.ok) {
+                    setActionError(await errorMessage(response, 'Failed to rotate ping URL'));
+                    return;
+                  }
+                  setJob((await response.json()) as Job);
+                } catch {
+                  setActionError('Failed to rotate ping URL');
+                } finally {
+                  setSaving(false);
+                }
+              }}
+              className="rounded-md border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-800 hover:bg-gray-50 disabled:opacity-50"
+            >
+              Rotate ping URL
+            </button>
             <button
               type="button"
               disabled={saving}

@@ -22,6 +22,7 @@ type Job struct {
 	NextExpect  time.Time `json:"next_expect" db:"next_expect"`
 	Status      JobStatus `json:"status" db:"status"`
 	UserID      string    `json:"user_id" db:"user_id"`
+	PingToken   string    `json:"ping_token" db:"ping_token"`
 	CreatedAt   time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
 }

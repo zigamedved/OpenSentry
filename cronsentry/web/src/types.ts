@@ -5,6 +5,7 @@ export interface Job {
   schedule: string;
   grace_time: number;
   status: 'healthy' | 'missing' | 'paused';
+  ping_token: string;
   last_ping: string;
   next_expect: string;
   created_at?: string;

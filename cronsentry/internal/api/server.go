@@ -17,14 +17,25 @@ import (
 )
 
 type Server struct {
-	db     *db.Database
-	logger *log.Logger
+	db           *db.Database
+	logger       *log.Logger
+	pingIP       *slidingLimiter
+	pingJob      *slidingLimiter
+	managementIP *slidingLimiter
+	authIP       *slidingLimiter
+	rateWindow   time.Duration
 }
 
 func NewServer(database *db.Database, logger *log.Logger) *Server {
+	window := rateLimitWindow
 	return &Server{
-		db:     database,
-		logger: logger,
+		db:           database,
+		logger:       logger,
+		pingIP:       newSlidingLimiter(pingPerIPLimit, window),
+		pingJob:      newSlidingLimiter(pingPerJobLimit, window),
+		managementIP: newSlidingLimiter(managementPerIPLimit, window),
+		authIP:       newSlidingLimiter(authPerIPLimit, window),
+		rateWindow:   window,
 	}
 }
 
@@ -41,10 +52,11 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("GET /api/jobs/{id}/events", s.handleListEvents)
 	mux.HandleFunc("PUT /api/jobs/{id}", s.handleUpdateJob)
 	mux.HandleFunc("DELETE /api/jobs/{id}", s.handleDeleteJob)
-	mux.HandleFunc("POST /api/ping/{id}", s.handlePing)
+	mux.HandleFunc("POST /api/jobs/{id}/rotate-ping", s.handleRotatePing)
+	mux.HandleFunc("POST /api/ping/{token}", s.handlePing)
 	mux.HandleFunc("GET /api/channels", s.handleListChannels)
 	mux.HandleFunc("PUT /api/channels/{kind}", s.handlePutChannel)
-	return s.corsMiddleware(s.loggingMiddleware(s.recoveryMiddleware(s.authMiddleware(mux))))
+	return s.corsMiddleware(s.loggingMiddleware(s.recoveryMiddleware(s.rateLimitMiddleware(s.authMiddleware(mux)))))
 }
 
 // publicPath is reachable without a session. Ping URLs, health, account
@@ -451,14 +463,37 @@ func (s *Server) handleUpdateJob(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(job)
 }
 
-func (s *Server) handlePing(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleRotatePing(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if id == "" {
 		http.Error(w, "Job ID is required", http.StatusBadRequest)
 		return
 	}
+	if _, ok := s.ownedJob(w, r, id); !ok {
+		return
+	}
+	job, err := s.db.RotatePingToken(id, currentUserID(r))
+	if err != nil {
+		if errors.Is(err, db.ErrJobNotFound) {
+			http.Error(w, "Job not found", http.StatusNotFound)
+			return
+		}
+		s.logger.Printf("Error rotating ping token: %v", err)
+		http.Error(w, "Failed to rotate ping URL", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(job)
+}
 
-	if err := s.db.RecordPing(id); err != nil {
+func (s *Server) handlePing(w http.ResponseWriter, r *http.Request) {
+	token := r.PathValue("token")
+	if token == "" {
+		http.Error(w, "Ping token is required", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.db.RecordPing(token); err != nil {
 		status := pingHTTPStatus(err)
 		if status == http.StatusNotFound {
 			http.Error(w, "Job not found", http.StatusNotFound)

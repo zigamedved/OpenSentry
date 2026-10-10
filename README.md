@@ -24,13 +24,13 @@ The Go module and Docker app live in [`cronsentry/`](cronsentry/). That director
 ### Ping System Architecture
 
 1. **User-side Integration**:
-   - Register a job in OpenSentry to get a unique job ID
+   - Register a job in OpenSentry to get a ping URL
    - Add an HTTP POST to the end of your cron job command:
      ```
-     curl -s -X POST http://your-opensentry-host:8080/api/ping/YOUR_JOB_ID
+     curl -s -X POST http://your-opensentry-host:8080/api/ping/YOUR_PING_TOKEN
      ```
    - This curl command sends a "heartbeat" to OpenSentry after your job completes successfully
-   - Treat the job ID as a secret. Anyone who has it can record a ping.
+   - Treat the ping URL like a password. Do not commit it, paste it in chat, or put it in a screenshot. Anyone who has it can record a ping. Rotate it from the job page when it leaks. The old URL stops working immediately. The job id in the dashboard does not change.
 
 2. **Server-side Monitoring**:
    - When a ping is received, OpenSentry updates the job's status to "healthy"
@@ -72,8 +72,30 @@ curl -X POST http://localhost:8080/api/jobs \
 Pings are HTTP **POST** requests. A GET does not record a heartbeat.
 
 ```bash
-curl -X POST http://localhost:8080/api/ping/YOUR_JOB_ID
+curl -X POST http://localhost:8080/api/ping/YOUR_PING_TOKEN
 ```
+
+`YOUR_PING_TOKEN` is the job's `ping_token`, not its id. A new job gets a token that is different from the id. Jobs created before tokens existed keep their old URL until you rotate: that token starts out equal to the job id.
+
+Rotate from the job page, or:
+
+```bash
+curl -X POST http://localhost:8080/api/jobs/JOB_ID/rotate-ping \
+  -b cookies.txt
+```
+
+The response is the job with the new `ping_token`. The previous ping URL then returns 404.
+
+Pings and account routes are rate limited in memory on each API process. Limits reset when the process restarts and are not shared across replicas.
+
+| Route | Limit |
+| --- | --- |
+| `POST /api/ping/…` | 60 per minute per IP, and 30 per minute per ping URL |
+| `POST /api/login`, `POST /api/register` | 20 per minute per IP |
+| Other `/api` routes | 120 per minute per IP |
+| `GET /healthz`, `OPTIONS` | not limited |
+
+A limited request returns 429 `Too Many Requests` and `Retry-After: 60`. The client IP is the first `X-Forwarded-For` value, or the connection address when that header is absent. Compose binds the API to localhost and nginx sets the header. A client who can reach the API directly can set the header itself.
 
 ## Quick Start
 
@@ -92,7 +114,7 @@ curl -X POST http://localhost:8080/api/ping/YOUR_JOB_ID
    docker compose up -d --build
    ```
 
-3. Open the dashboard at http://localhost:3000 (the API listens on http://localhost:8080) and create an account. Each account sees only its own jobs. Each job card shows a copyable `POST` curl. The job id in that URL is a secret.
+3. Open the dashboard at http://localhost:3000 (the API listens on http://localhost:8080) and create an account. Each account sees only its own jobs. Each job card shows a copyable `POST` curl. That ping URL is a secret, like a password. Do not commit it. Rotate it from the job page when it leaks; the old URL stops working immediately.
 
 4. Run the copied ping (or the example below). Refresh the dashboard. The job's last ping time updates and the status stays healthy.
 
@@ -172,7 +194,7 @@ Compose reads those variables from the environment or from a `.env` file in `cro
 
 3. Open `https://monitor.example.com`, create an account, and copy a ping command from a job card. `GET https://monitor.example.com/healthz` is the probe: 200 when Postgres answers, 503 when it does not.
 
-Caddy gets a Let's Encrypt certificate for `SITE_ADDRESS` and sends `X-Forwarded-Proto: https`. nginx forwards that header, and the API marks the session cookie `Secure`.
+Caddy gets a Let's Encrypt certificate for `SITE_ADDRESS` and sends `X-Forwarded-Proto: https`. nginx forwards that header, and the API marks the session cookie `Secure`. nginx also appends the visitor to `X-Forwarded-For`. Rate limits use that address. They live in each API process, so a second replica would count separately.
 
 The bundled Postgres image does not speak TLS. Leave `DB_SSLMODE=disable` for it. The connection stays on the Docker network.
 
