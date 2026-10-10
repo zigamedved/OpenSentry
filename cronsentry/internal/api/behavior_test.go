@@ -55,8 +55,8 @@ func TestJobLifecycleMatchesCurrentBehavior(t *testing.T) {
 	if strings.TrimSpace(empty.Body) != "[]" {
 		t.Fatalf("empty list = %q, want []", empty.Body)
 	}
-	if empty.Header.Get("Access-Control-Allow-Origin") != "*" {
-		t.Fatalf("cors = %q", empty.Header.Get("Access-Control-Allow-Origin"))
+	if empty.Header.Get("Access-Control-Allow-Origin") != "" {
+		t.Fatalf("cors = %q, want no allow-origin without an allowlisted Origin", empty.Header.Get("Access-Control-Allow-Origin"))
 	}
 
 	created := do(t, srv, http.MethodPost, "/api/jobs", `{
@@ -200,17 +200,71 @@ func TestHealthzReportsDatabase(t *testing.T) {
 	}
 }
 
-func TestPreflightAllowsBrowserCalls(t *testing.T) {
+func TestPreflightUsesTheOriginAllowlist(t *testing.T) {
+	t.Setenv("CORS_ORIGINS", "https://monitor.example.com")
 	srv := newBehaviorServer(t)
-	resp := do(t, srv, http.MethodOptions, "/api/jobs", "")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("options status = %d", resp.StatusCode)
+
+	open := do(t, srv, http.MethodOptions, "/api/jobs", "")
+	if open.StatusCode != http.StatusNoContent {
+		t.Fatalf("options status = %d", open.StatusCode)
 	}
-	if resp.Header.Get("Access-Control-Allow-Origin") != "*" {
-		t.Fatalf("origin = %q", resp.Header.Get("Access-Control-Allow-Origin"))
+	if open.Header.Get("Access-Control-Allow-Origin") != "" {
+		t.Fatalf("origin without a request Origin = %q", open.Header.Get("Access-Control-Allow-Origin"))
 	}
-	if !strings.Contains(resp.Header.Get("Access-Control-Allow-Methods"), "POST") {
-		t.Fatalf("methods = %q", resp.Header.Get("Access-Control-Allow-Methods"))
+
+	req, err := http.NewRequest(http.MethodOptions, srv.URL+"/api/jobs", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Origin", "https://evil.example")
+	denied, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	denied.Body.Close()
+	if denied.Header.Get("Access-Control-Allow-Origin") != "" {
+		t.Fatalf("evil origin = %q", denied.Header.Get("Access-Control-Allow-Origin"))
+	}
+
+	req, err = http.NewRequest(http.MethodOptions, srv.URL+"/api/jobs", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Origin", "https://monitor.example.com")
+	allowed, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed.Body.Close()
+	if allowed.StatusCode != http.StatusNoContent {
+		t.Fatalf("allowlisted preflight = %d", allowed.StatusCode)
+	}
+	if allowed.Header.Get("Access-Control-Allow-Origin") != "https://monitor.example.com" {
+		t.Fatalf("origin = %q", allowed.Header.Get("Access-Control-Allow-Origin"))
+	}
+	if allowed.Header.Get("Access-Control-Allow-Credentials") != "true" {
+		t.Fatal("allowlisted preflight omitted credentials")
+	}
+	if !strings.Contains(allowed.Header.Get("Access-Control-Allow-Methods"), "POST") {
+		t.Fatalf("methods = %q", allowed.Header.Get("Access-Control-Allow-Methods"))
+	}
+
+	ping, err := http.NewRequest(http.MethodPost, srv.URL+"/api/ping/does-not-exist", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ping.Header.Set("Origin", "https://evil.example")
+	pinged, err := http.DefaultClient.Do(ping)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(pinged.Body)
+	pinged.Body.Close()
+	if pinged.StatusCode != http.StatusNotFound || strings.TrimSpace(string(body)) != "Job not found" {
+		t.Fatalf("ping from other origin = %d %q", pinged.StatusCode, body)
+	}
+	if pinged.Header.Get("Access-Control-Allow-Origin") != "" {
+		t.Fatalf("ping ACAO = %q", pinged.Header.Get("Access-Control-Allow-Origin"))
 	}
 }
 
