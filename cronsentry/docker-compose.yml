@@ -18,6 +18,8 @@ services:
       - SENDGRID_API_KEY=${SENDGRID_API_KEY:-}
       - EMAIL_FROM=${EMAIL_FROM:-}
       - DASHBOARD_URL=${DASHBOARD_URL:-http://localhost:3000}
+      # Optional. Exact browser origins allowed to call the API cross-origin. Empty keeps same-origin only.
+      - CORS_ORIGINS=${CORS_ORIGINS:-}
       - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
       - DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL:-}
     restart: unless-stopped
