@@ -69,6 +69,27 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
 
+-- Hosted billing. No row means the Free plan when Stripe is configured.
+-- Self-host installs leave Stripe unset and do not enforce these rows.
+CREATE TABLE IF NOT EXISTS billing_accounts (
+    user_id VARCHAR(36) PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    plan VARCHAR(20) NOT NULL DEFAULT 'free',
+    stripe_customer_id VARCHAR(255),
+    stripe_subscription_id VARCHAR(255),
+    subscription_status VARCHAR(40) NOT NULL DEFAULT '',
+    event_created_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_billing_stripe_customer
+    ON billing_accounts (stripe_customer_id)
+    WHERE stripe_customer_id IS NOT NULL AND stripe_customer_id <> '';
+
+CREATE TABLE IF NOT EXISTS stripe_events (
+    id VARCHAR(255) PRIMARY KEY,
+    received_at TIMESTAMPTZ NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS alert_channels (
     id VARCHAR(36) PRIMARY KEY,
     user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,

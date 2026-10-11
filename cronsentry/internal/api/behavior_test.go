@@ -748,6 +748,9 @@ func newBehaviorServer(t *testing.T) *httptest.Server {
 	if _, err := database.GetDB().Exec(`TRUNCATE TABLE users RESTART IDENTITY CASCADE`); err != nil {
 		t.Fatalf("truncate users: %v", err)
 	}
+	if _, err := database.GetDB().Exec(`TRUNCATE TABLE stripe_events`); err != nil {
+		t.Fatalf("truncate stripe events: %v", err)
+	}
 
 	srv := httptest.NewServer(NewServer(database, log.New(io.Discard, "", 0)).Router())
 	t.Cleanup(srv.Close)

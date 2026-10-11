@@ -146,10 +146,21 @@ The API reads these environment variables. Compose sets the database values show
 | `EMAIL_FROM` | `OpenSentry <noreply@localhost>` | SendGrid from address. Use a verified sender, for example `OpenSentry <alerts@yourdomain>`. |
 | `DASHBOARD_URL` | unset | Link included in alerts. Compose defaults this to `http://localhost:3000`. |
 | `CORS_ORIGINS` | unset | Comma-separated browser origins allowed to read API responses, for example `https://monitor.example.com`. Unset keeps the API same-origin only. `*` is ignored. |
+| `STRIPE_SECRET_KEY` | unset | Stripe secret key. Hosted billing stays off, and checks stay unlimited, until this, the webhook secret, and the price id are all set. |
+| `STRIPE_WEBHOOK_SECRET` | unset | Signing secret for `POST /api/stripe/webhook`. |
+| `STRIPE_PRICE_ID` | unset | Stripe price id for the Pro subscription. |
 | `SLACK_WEBHOOK_URL` | unset | Slack incoming webhook for the self-host user. Saved on startup when set. |
 | `DISCORD_WEBHOOK_URL` | unset | Discord webhook for the self-host user. Saved on startup when set. |
 
 `GET /healthz` returns 200 `{"status":"ok"}` when the API can ping Postgres, and 503 when it cannot. It does not require a session. The nginx dashboard proxies `/healthz` to the API so an orchestrator can probe the public site.
+
+## Billing
+
+Self-hosting is free. Leave the Stripe variables unset and OpenSentry does not limit how many checks you create or how often they run.
+
+Hosted billing turns on only when `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and `STRIPE_PRICE_ID` are all set. Accounts then start on the Free plan: 5 checks, and each schedule must be at least 5 minutes apart. Pro is the Stripe price: 50 checks and a 1 minute minimum, while the subscription status is `active` or `trialing`. Any other status, including `past_due` and `canceled`, uses the Free limits.
+
+Create a recurring price in Stripe and put its id in `STRIPE_PRICE_ID`. Point a webhook at `https://your-host/api/stripe/webhook` for `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, and `customer.subscription.deleted`. The dashboard Upgrade button opens Stripe Checkout. Manage billing opens the Customer Portal after a customer exists. Set `DASHBOARD_URL` so Stripe can send the browser back. `STRIPE_API_BASE` overrides the Stripe API host; leave it unset outside tests.
 
 Accounts use email and password. Passwords are stored as bcrypt hashes and are never returned in JSON. A session is an opaque token stored only as a SHA-256 hash, valid for 14 days. The dashboard uses the `opensentry_session` cookie (`HttpOnly`, `SameSite=Lax`, `Secure` on HTTPS). Page JavaScript cannot read that cookie. XSS on the dashboard can still call the API as the signed-in user, but it cannot copy the cookie to another site. Login and register also return `token` for `Authorization: Bearer`. The dashboard does not store it. If a script keeps that token in JavaScript or local storage, XSS can steal it and replay it from anywhere. Prefer the cookie in browsers. There is no shared `API_TOKEN`. `POST /api/logout` does not require a live session: it deletes the token when one matches and always expires the cookie.
 
