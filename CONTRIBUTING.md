@@ -31,7 +31,7 @@ npm run dev
 - API: http://localhost:8080
 - Dashboard: http://localhost:5173
 
-The Vite dev server proxies `/api` to the API, so the dashboard uses same-origin requests. The Go process reads `internal/db/schema.sql` relative to the `cronsentry` directory, so start it from there.
+The Vite dev server proxies `/api` to the API, so the dashboard uses same-origin requests and does not need `CORS_ORIGINS`. The Go process reads `internal/db/schema.sql` relative to the `cronsentry` directory, so start it from there.
 
 ## Checks
 

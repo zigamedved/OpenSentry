@@ -120,7 +120,9 @@ A limited request returns 429 `Too Many Requests` and `Retry-After: 60`. The cli
 
 The Compose UI is nginx on port 3000. It proxies `/api` to the API container, and the frontend calls that same-origin path. `VITE_API_URL` is a **build** argument (Vite inlines it). Leave it empty.
 
-The dashboard signs in with the `opensentry_session` cookie. Browsers only send that cookie to the same origin, and the API responds with `Access-Control-Allow-Origin: *` without credentials. A cross-origin `VITE_API_URL` will not receive the session cookie, so keep the dashboard and the API on one origin (nginx in Compose, the Vite proxy in local dev).
+The dashboard signs in with the `opensentry_session` cookie. Nginx in Compose and the Vite dev server proxy `/api`, so the browser treats those calls as same-origin and sends the cookie without CORS. Leave `VITE_API_URL` empty.
+
+`CORS_ORIGINS` is an optional comma-separated list of exact browser origins, such as `https://monitor.example.com`. The API echoes `Access-Control-Allow-Origin` only for a listed origin and allows credentials, so a dashboard on another host can send the cookie. Leave it unset when the dashboard and the API share an origin. A `*` entry is ignored. Cron pings send no `Origin` header and do not need to be listed. See [SECURITY.md](SECURITY.md) for how the cookie and the bearer token differ if the dashboard has XSS.
 
 ### Local Go and Vite
 
@@ -143,12 +145,13 @@ The API reads these environment variables. Compose sets the database values show
 | `SENDGRID_API_KEY` | unset | When set, missing-job email is sent through SendGrid. When unset, the API logs `would send` and marks the notification `skipped`. |
 | `EMAIL_FROM` | `OpenSentry <noreply@localhost>` | SendGrid from address. Use a verified sender, for example `OpenSentry <alerts@yourdomain>`. |
 | `DASHBOARD_URL` | unset | Link included in alerts. Compose defaults this to `http://localhost:3000`. |
+| `CORS_ORIGINS` | unset | Comma-separated browser origins allowed to read API responses, for example `https://monitor.example.com`. Unset keeps the API same-origin only. `*` is ignored. |
 | `SLACK_WEBHOOK_URL` | unset | Slack incoming webhook for the self-host user. Saved on startup when set. |
 | `DISCORD_WEBHOOK_URL` | unset | Discord webhook for the self-host user. Saved on startup when set. |
 
 `GET /healthz` returns 200 `{"status":"ok"}` when the API can ping Postgres, and 503 when it cannot. It does not require a session. The nginx dashboard proxies `/healthz` to the API so an orchestrator can probe the public site.
 
-Accounts use email and password. Passwords are stored as bcrypt hashes and are never returned in JSON. A session is an opaque token stored only as a SHA-256 hash, valid for 14 days, sent as the `opensentry_session` cookie and as a bearer token. There is no shared `API_TOKEN`. `POST /api/logout` does not require a live session: it deletes the token when one matches and always expires the cookie.
+Accounts use email and password. Passwords are stored as bcrypt hashes and are never returned in JSON. A session is an opaque token stored only as a SHA-256 hash, valid for 14 days. The dashboard uses the `opensentry_session` cookie (`HttpOnly`, `SameSite=Lax`, `Secure` on HTTPS). Page JavaScript cannot read that cookie. XSS on the dashboard can still call the API as the signed-in user, but it cannot copy the cookie to another site. Login and register also return `token` for `Authorization: Bearer`. The dashboard does not store it. If a script keeps that token in JavaScript or local storage, XSS can steal it and replay it from anywhere. Prefer the cookie in browsers. There is no shared `API_TOKEN`. `POST /api/logout` does not require a live session: it deletes the token when one matches and always expires the cookie.
 
 Jobs created before accounts belong to `test-user` (`test@example.com`) and stay hidden from accounts you register later. Set `DEMO_SEED=true` and restart once to sign in as that user, or create a new account and new jobs. If `test@example.com` is already in the database, `DEMO_SEED` leaves its password unchanged (the old seed password was `secret`). A missing email is created as `opensentry-demo`.
 
@@ -195,6 +198,8 @@ Compose reads those variables from the environment or from a `.env` file in `cro
 3. Open `https://monitor.example.com`, create an account, and copy a ping command from a job card. `GET https://monitor.example.com/healthz` is the probe: 200 when Postgres answers, 503 when it does not.
 
 Caddy gets a Let's Encrypt certificate for `SITE_ADDRESS` and sends `X-Forwarded-Proto: https`. nginx forwards that header, and the API marks the session cookie `Secure`. nginx also appends the visitor to `X-Forwarded-For`. Rate limits use that address. They live in each API process, so a second replica would count separately.
+
+The public site is one origin, so leave `CORS_ORIGINS` unset. Set it only when a browser on a different origin calls the API.
 
 The bundled Postgres image does not speak TLS. Leave `DB_SSLMODE=disable` for it. The connection stays on the Docker network.
 

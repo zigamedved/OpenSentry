@@ -17,25 +17,27 @@ import (
 )
 
 type Server struct {
-	db           *db.Database
-	logger       *log.Logger
-	pingIP       *slidingLimiter
-	pingJob      *slidingLimiter
-	managementIP *slidingLimiter
-	authIP       *slidingLimiter
-	rateWindow   time.Duration
+	db             *db.Database
+	logger         *log.Logger
+	pingIP         *slidingLimiter
+	pingJob        *slidingLimiter
+	managementIP   *slidingLimiter
+	authIP         *slidingLimiter
+	rateWindow     time.Duration
+	allowedOrigins map[string]struct{}
 }
 
 func NewServer(database *db.Database, logger *log.Logger) *Server {
 	window := rateLimitWindow
 	return &Server{
-		db:           database,
-		logger:       logger,
-		pingIP:       newSlidingLimiter(pingPerIPLimit, window),
-		pingJob:      newSlidingLimiter(pingPerJobLimit, window),
-		managementIP: newSlidingLimiter(managementPerIPLimit, window),
-		authIP:       newSlidingLimiter(authPerIPLimit, window),
-		rateWindow:   window,
+		db:             database,
+		logger:         logger,
+		pingIP:         newSlidingLimiter(pingPerIPLimit, window),
+		pingJob:        newSlidingLimiter(pingPerJobLimit, window),
+		managementIP:   newSlidingLimiter(managementPerIPLimit, window),
+		authIP:         newSlidingLimiter(authPerIPLimit, window),
+		rateWindow:     window,
+		allowedOrigins: allowedOriginsFromEnv(logger),
 	}
 }
 
@@ -169,12 +171,16 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		w.Header().Add("Vary", "Origin")
+		if origin := strings.TrimSpace(r.Header.Get("Origin")); s.originAllowed(origin) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		}
 
-		if r.Method == "OPTIONS" {
-			w.WriteHeader(http.StatusOK)
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 

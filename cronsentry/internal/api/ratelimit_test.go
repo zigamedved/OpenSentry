@@ -42,7 +42,7 @@ func TestHealthzAndOptionsAreNotLimited(t *testing.T) {
 
 		options := httptest.NewRecorder()
 		handler.ServeHTTP(options, httptest.NewRequest(http.MethodOptions, "/api/jobs", nil))
-		if options.Code != http.StatusOK {
+		if options.Code != http.StatusNoContent {
 			t.Fatalf("options = %d", options.Code)
 		}
 	}
