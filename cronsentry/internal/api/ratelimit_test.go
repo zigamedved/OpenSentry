@@ -25,7 +25,7 @@ func TestClientIPUsesLeftmostForwardedAddress(t *testing.T) {
 	}
 }
 
-func TestHealthzAndOptionsAreNotLimited(t *testing.T) {
+func TestHealthzOptionsAndStripeWebhookAreNotLimited(t *testing.T) {
 	restore := setLimits(t, 1, 1, 1, 1)
 	defer restore()
 
@@ -44,6 +44,15 @@ func TestHealthzAndOptionsAreNotLimited(t *testing.T) {
 		handler.ServeHTTP(options, httptest.NewRequest(http.MethodOptions, "/api/jobs", nil))
 		if options.Code != http.StatusNoContent {
 			t.Fatalf("options = %d", options.Code)
+		}
+
+		webhook := httptest.NewRecorder()
+		handler.ServeHTTP(webhook, httptest.NewRequest(http.MethodPost, "/api/stripe/webhook", nil))
+		if webhook.Code == http.StatusTooManyRequests {
+			t.Fatal("stripe webhook was rate limited")
+		}
+		if webhook.Code != http.StatusNotFound {
+			t.Fatalf("webhook = %d", webhook.Code)
 		}
 	}
 }

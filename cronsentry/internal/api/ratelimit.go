@@ -81,7 +81,9 @@ func clientIP(r *http.Request) string {
 
 func (s *Server) rateLimitMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodOptions || r.URL.Path == "/healthz" {
+		// Stripe retries a burst from one egress IP. Do not count that against the
+		// management limit, or a retry storm can lock the dashboard.
+		if r.Method == http.MethodOptions || r.URL.Path == "/healthz" || (r.Method == http.MethodPost && r.URL.Path == "/api/stripe/webhook") {
 			next.ServeHTTP(w, r)
 			return
 		}

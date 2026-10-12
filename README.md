@@ -93,7 +93,7 @@ Pings and account routes are rate limited in memory on each API process. Limits 
 | `POST /api/ping/…` | 60 per minute per IP, and 30 per minute per ping URL |
 | `POST /api/login`, `POST /api/register` | 20 per minute per IP |
 | Other `/api` routes | 120 per minute per IP |
-| `GET /healthz`, `OPTIONS` | not limited |
+| `GET /healthz`, `OPTIONS`, `POST /api/stripe/webhook` | not limited |
 
 A limited request returns 429 `Too Many Requests` and `Retry-After: 60`. The client IP is the first `X-Forwarded-For` value, or the connection address when that header is absent. Compose binds the API to localhost and nginx sets the header. A client who can reach the API directly can set the header itself.
 
@@ -159,6 +159,8 @@ The API reads these environment variables. Compose sets the database values show
 Self-hosting is free. Leave the Stripe variables unset and OpenSentry does not limit how many checks you create or how often they run.
 
 Hosted billing turns on only when `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and `STRIPE_PRICE_ID` are all set. Accounts then start on the Free plan: 5 checks, and each schedule must be at least 5 minutes apart. Pro is the Stripe price: 50 checks and a 1 minute minimum, while the subscription status is `active` or `trialing`. Any other status, including `past_due` and `canceled`, uses the Free limits.
+
+Those schedule floors apply when a check is created or its schedule changes. A check that is already more frequent than the plan allows keeps running. It is not paused. `POST /api/stripe/webhook` is not rate limited, so a Stripe retry burst does not block the dashboard.
 
 Create a recurring price in Stripe and put its id in `STRIPE_PRICE_ID`. Point a webhook at `https://your-host/api/stripe/webhook` for `checkout.session.completed`, `customer.subscription.created`, `customer.subscription.updated`, and `customer.subscription.deleted`. The dashboard Upgrade button opens Stripe Checkout. Manage billing opens the Customer Portal after a customer exists. Set `DASHBOARD_URL` so Stripe can send the browser back. `STRIPE_API_BASE` overrides the Stripe API host; leave it unset outside tests.
 

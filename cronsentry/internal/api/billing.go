@@ -453,6 +453,10 @@ func jsonID(raw json.RawMessage) string {
 	return ""
 }
 
+// verifyStripeSignature checks the Stripe-Signature header.
+// The scheme is t=<unix seconds>,v1=<hex HMAC-SHA256 of "{t}.{raw body}">
+// using the webhook secret. Other versions, including v0, are ignored.
+// The timestamp must be within five minutes of now.
 func verifyStripeSignature(payload []byte, header, secret string, now time.Time) error {
 	if strings.TrimSpace(secret) == "" || strings.TrimSpace(header) == "" {
 		return errors.New("missing signature")
