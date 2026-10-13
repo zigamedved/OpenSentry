@@ -11,6 +11,7 @@ The Go module and Docker app live in [`cronsentry/`](cronsentry/). That director
 ## Features
 
 - **Simple Ping System**: Just add a simple curl command to your cron job
+- **Start and fail signals**: Record when a job begins, how long it ran, and an explicit failure. The last 64KB of output is kept.
 - **Flexible Alert Thresholds**: Set custom grace periods for each job
 - **Email Notifications**: Get notified when jobs fail to run (SendGrid when configured; otherwise dry-run)
 - **Status Dashboard**: View the health of all your jobs in one place
@@ -30,6 +31,7 @@ The Go module and Docker app live in [`cronsentry/`](cronsentry/). That director
      curl -s -X POST http://your-opensentry-host:8080/api/ping/YOUR_PING_TOKEN
      ```
    - This curl command sends a "heartbeat" to OpenSentry after your job completes successfully
+   - Optional signals use the same token: `POST /api/ping/YOUR_PING_TOKEN/start` when the job begins, and `POST /api/ping/YOUR_PING_TOKEN/fail` when it exits non-zero. A success ping after `/start` stores the duration. `/fail` marks the job missing immediately. Append `--data-binary @log.txt` to store output (64KB per ping, 20 newest logs).
    - Treat the ping URL like a password. Do not commit it, paste it in chat, or put it in a screenshot. Anyone who has it can record a ping. Rotate it from the job page when it leaks. The old URL stops working immediately. The job id in the dashboard does not change.
 
 2. **Server-side Monitoring**:
@@ -73,9 +75,17 @@ Pings are HTTP **POST** requests. A GET does not record a heartbeat.
 
 ```bash
 curl -X POST http://localhost:8080/api/ping/YOUR_PING_TOKEN
+curl -X POST http://localhost:8080/api/ping/YOUR_PING_TOKEN/start
+curl -X POST http://localhost:8080/api/ping/YOUR_PING_TOKEN/fail --data-binary @log.txt
 ```
 
 `YOUR_PING_TOKEN` is the job's `ping_token`, not its id. A new job gets a token that is different from the id. Jobs created before tokens existed keep their old URL until you rotate: that token starts out equal to the job id.
+
+`/start` records that a run began. It does not move the schedule. The job detail page shows the run as in progress, and the next success ping stores how long it ran. `/fail` marks a job missing immediately and sends the failure alert once. A second `/fail` is logged and does not alert again. A paused job stays paused and does not alert. A success ping after a failure marks the job healthy again.
+
+Each signal accepts a request body. OpenSentry stores at most 64KB and marks the event truncated when the body was longer. The job keeps the newest non-empty body. Event logs keep that body on the 20 newest events that had one; older event bodies are dropped. An empty body does not clear the previous output.
+
+`/start` and `/fail` share the per-URL rate limit with the success ping.
 
 Rotate from the job page, or:
 
@@ -90,7 +100,7 @@ Pings and account routes are rate limited in memory on each API process. Limits 
 
 | Route | Limit |
 | --- | --- |
-| `POST /api/ping/…` | 60 per minute per IP, and 30 per minute per ping URL |
+| `POST /api/ping/…`, `/start`, `/fail` | 60 per minute per IP, and 30 per minute per ping URL |
 | `POST /api/login`, `POST /api/register` | 20 per minute per IP |
 | Other `/api` routes | 120 per minute per IP |
 | `GET /healthz`, `OPTIONS`, `POST /api/stripe/webhook` | not limited |

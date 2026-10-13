@@ -7,7 +7,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/adhocore/gronx"
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
 	"github.com/zigamedved/OpenSentry/internal/models"
@@ -68,6 +67,7 @@ func scanJobFields(job *models.Job) []any {
 		&job.ID, &job.Name, &job.Description, &job.Schedule,
 		&job.GraceTime, &job.LastPing, &job.NextExpect,
 		&job.Status, &job.UserID, &job.CreatedAt, &job.UpdatedAt, &job.PingToken,
+		&job.StartedAt, &job.LastDurationMs, &job.LastBody,
 	}
 }
 
@@ -85,7 +85,8 @@ func (d *Database) scanJob(row *sql.Row) (*models.Job, error) {
 
 const jobSelect = `
 	SELECT id, name, description, schedule, grace_time,
-	       last_ping, next_expect, status, user_id, created_at, updated_at, ping_token
+	       last_ping, next_expect, status, user_id, created_at, updated_at, ping_token,
+	       started_at, last_duration_ms, last_body
 	FROM jobs
 `
 
@@ -208,83 +209,7 @@ func (d *Database) RotatePingToken(id, userID string) (*models.Job, error) {
 }
 
 func (d *Database) RecordPing(token string) error {
-	now := time.Now().UTC()
-
-	job, err := requireJob(d.GetJobByPingToken(token))
-	if err != nil {
-		if errors.Is(err, ErrJobNotFound) {
-			return err
-		}
-		return fmt.Errorf("error recording ping: %w", err)
-	}
-	nextTick, err := gronx.NextTickAfter(job.Schedule, now, true)
-	if err != nil {
-		return fmt.Errorf("error calculating next tick: %w", err)
-	}
-
-	tx, err := d.db.Begin()
-	if err != nil {
-		return fmt.Errorf("error starting transaction: %w", err)
-	}
-
-	query := `
-		UPDATE jobs
-		SET last_ping = $1, updated_at = $1, next_expect = $2
-		WHERE id = $3
-		RETURNING status
-	`
-
-	var currentStatus models.JobStatus
-	err = tx.QueryRow(query, now, nextTick, job.ID).Scan(&currentStatus)
-	if err != nil {
-		tx.Rollback()
-		if err == sql.ErrNoRows {
-			return ErrJobNotFound
-		}
-		return fmt.Errorf("error updating job ping: %w", err)
-	}
-
-	eventID := uuid.New().String()
-	eventType := "ping"
-
-	if currentStatus == models.StatusMissing {
-		eventType = "recovery"
-
-		_, err = tx.Exec(`
-			UPDATE jobs
-			SET status = $1
-			WHERE id = $2
-		`, models.StatusHealthy, job.ID)
-
-		if err != nil {
-			tx.Rollback()
-			return fmt.Errorf("error updating job status: %w", err)
-		}
-	}
-
-	_, err = tx.Exec(`
-		INSERT INTO job_events (id, job_id, type, data, created_at)
-		VALUES ($1, $2, $3, $4, $5)
-	`, eventID, job.ID, eventType, "{}", now)
-
-	if err != nil {
-		tx.Rollback()
-		return fmt.Errorf("error creating event record: %w", err)
-	}
-
-	if eventType == "recovery" {
-		if err = enqueueAlerts(tx, job.UserID, job.ID, job.Name, "recovery", now); err != nil {
-			tx.Rollback()
-			return err
-		}
-	}
-
-	err = tx.Commit()
-	if err != nil {
-		return fmt.Errorf("error committing transaction: %w", err)
-	}
-
-	return nil
+	return d.RecordPingSignal(token, "success", "", false)
 }
 
 func getEnv(key, defaultValue string) string {

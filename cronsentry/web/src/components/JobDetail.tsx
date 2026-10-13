@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { PingCommand } from './JobCard';
-import { formatTime, type Job, type JobEvent } from '../types';
+import { PingCommand, PingSignals } from './JobCard';
+import { formatDuration, formatTime, type Job, type JobEvent } from '../types';
 
 interface JobDetailProps {
   jobId: string;
@@ -24,6 +24,16 @@ async function errorMessage(response: Response, fallback: string) {
   if (response.status === 401) return 'Sign in again.';
   const text = (await response.text()).trim();
   return text || fallback;
+}
+
+function eventExtras(data: string): { duration?: number; body?: string; truncated?: boolean } {
+  if (!data || data === '{}') return {};
+  try {
+    const parsed = JSON.parse(data) as { duration_ms?: number; body?: string; truncated?: boolean };
+    return { duration: parsed.duration_ms, body: parsed.body, truncated: parsed.truncated };
+  } catch {
+    return {};
+  }
 }
 
 const statusColors: Record<string, string> = {
@@ -202,10 +212,19 @@ export function JobDetail({ jobId, apiUrl, apiOrigin, onBack, onDelete, onAuthEr
               <dt className="text-sm text-gray-500">Next expected</dt>
               <dd className="font-medium text-gray-900">{formatTime(job.next_expect)}</dd>
             </div>
+            <div>
+              <dt className="text-sm text-gray-500">Last duration</dt>
+              <dd className="font-medium text-gray-900">{formatDuration(job.last_duration_ms)}</dd>
+            </div>
+            <div>
+              <dt className="text-sm text-gray-500">Run in progress</dt>
+              <dd className="font-medium text-gray-900">{job.started_at ? `Since ${formatTime(job.started_at)}` : 'No'}</dd>
+            </div>
           </dl>
 
           <div className="mt-6">
             <PingCommand apiOrigin={apiOrigin} pingToken={job.ping_token} />
+            <PingSignals apiOrigin={apiOrigin} pingToken={job.ping_token} />
           </div>
 
           {actionError ? <p className="mt-4 text-sm text-red-600">{actionError}</p> : null}
@@ -332,19 +351,39 @@ export function JobDetail({ jobId, apiUrl, apiOrigin, onBack, onDelete, onAuthEr
           </form>
 
           <section className="mt-8 border-t border-gray-100 pt-6">
+            <h3 className="text-lg font-semibold text-gray-900">Last output</h3>
+            {job.last_body ? (
+              <pre className="mt-3 max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-gray-50 p-3 text-xs text-gray-800">{job.last_body}</pre>
+            ) : (
+              <p className="mt-3 text-sm text-gray-500">No output stored. Send a ping body with --data-binary.</p>
+            )}
+          </section>
+
+          <section className="mt-8 border-t border-gray-100 pt-6">
             <h3 className="text-lg font-semibold text-gray-900">Events</h3>
             {eventsError ? <p className="mt-3 text-sm text-red-600">{eventsError}</p> : null}
             {events && events.length === 0 ? (
-              <p className="mt-3 text-sm text-gray-500">No events yet. A ping, miss, or recovery will show up here.</p>
+              <p className="mt-3 text-sm text-gray-500">No events yet. A ping, start, fail, miss, or recovery will show up here.</p>
             ) : null}
             {events && events.length > 0 ? (
               <ol className="mt-4 space-y-3">
-                {events.map((event) => (
-                  <li key={event.id} className="flex items-center justify-between gap-3 rounded-md bg-gray-50 px-3 py-2">
-                    <span className="text-sm font-medium text-gray-900">{event.type}</span>
-                    <span className="text-sm text-gray-500">{formatTime(event.created_at)}</span>
-                  </li>
-                ))}
+                {events.map((event) => {
+                  const extra = eventExtras(event.data);
+                  return (
+                    <li key={event.id} className="rounded-md bg-gray-50 px-3 py-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-sm font-medium text-gray-900">{event.type}</span>
+                        <span className="text-sm text-gray-500">{formatTime(event.created_at)}</span>
+                      </div>
+                      {extra.duration != null ? (
+                        <p className="mt-1 text-xs text-gray-500">Duration {formatDuration(extra.duration)}</p>
+                      ) : null}
+                      {extra.body ? (
+                        <pre className="mt-2 max-h-24 overflow-auto whitespace-pre-wrap text-xs text-gray-700">{extra.body}{extra.truncated ? '\n…truncated' : ''}</pre>
+                      ) : null}
+                    </li>
+                  );
+                })}
               </ol>
             ) : null}
           </section>

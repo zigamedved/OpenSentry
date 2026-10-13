@@ -60,6 +60,8 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("PUT /api/jobs/{id}", s.handleUpdateJob)
 	mux.HandleFunc("DELETE /api/jobs/{id}", s.handleDeleteJob)
 	mux.HandleFunc("POST /api/jobs/{id}/rotate-ping", s.handleRotatePing)
+	mux.HandleFunc("POST /api/ping/{token}/start", s.handlePingStart)
+	mux.HandleFunc("POST /api/ping/{token}/fail", s.handlePingFail)
 	mux.HandleFunc("POST /api/ping/{token}", s.handlePing)
 	mux.HandleFunc("GET /api/channels", s.handleListChannels)
 	mux.HandleFunc("PUT /api/channels/{kind}", s.handlePutChannel)
@@ -509,25 +511,15 @@ func (s *Server) handleRotatePing(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePing(w http.ResponseWriter, r *http.Request) {
-	token := r.PathValue("token")
-	if token == "" {
-		http.Error(w, "Ping token is required", http.StatusBadRequest)
-		return
-	}
+	s.recordPing(w, r, "success")
+}
 
-	if err := s.db.RecordPing(token); err != nil {
-		status := pingHTTPStatus(err)
-		if status == http.StatusNotFound {
-			http.Error(w, "Job not found", http.StatusNotFound)
-			return
-		}
-		s.logger.Printf("Error recording ping: %v", err)
-		http.Error(w, "Failed to record ping", http.StatusInternalServerError)
-		return
-	}
+func (s *Server) handlePingStart(w http.ResponseWriter, r *http.Request) {
+	s.recordPing(w, r, "start")
+}
 
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"ok"}`))
+func (s *Server) handlePingFail(w http.ResponseWriter, r *http.Request) {
+	s.recordPing(w, r, "fail")
 }
 
 func (s *Server) loggingMiddleware(next http.Handler) http.Handler {

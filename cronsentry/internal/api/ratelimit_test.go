@@ -94,6 +94,42 @@ func TestPingIPLimitDoesNotConsumeJobBudget(t *testing.T) {
 	}
 }
 
+func TestPingLimitKeyIgnoresSignalSuffix(t *testing.T) {
+	if pingLimitKey("/api/ping/token-a") != "token-a" {
+		t.Fatal("success path")
+	}
+	if pingLimitKey("/api/ping/token-a/start") != "token-a" {
+		t.Fatal("start path")
+	}
+	if pingLimitKey("/api/ping/token-a/fail") != "token-a" {
+		t.Fatal("fail path")
+	}
+}
+
+func TestStartSharesPingTokenBudget(t *testing.T) {
+	restore := setLimits(t, 60, 1, 120, 20)
+	defer restore()
+
+	handler := NewServer(nil, log.New(io.Discard, "", 0)).Router()
+	post := func(path, ip string) int {
+		req := httptest.NewRequest(http.MethodPost, path, nil)
+		req.Header.Set("X-Forwarded-For", ip)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		return rr.Code
+	}
+
+	if post("/api/ping/token-a/start", "203.0.113.10") == http.StatusTooManyRequests {
+		t.Fatal("start was limited")
+	}
+	if post("/api/ping/token-a", "203.0.113.11") != http.StatusTooManyRequests {
+		t.Fatal("success ping did not share the start token budget")
+	}
+	if post("/api/ping/token-b/fail", "203.0.113.12") == http.StatusTooManyRequests {
+		t.Fatal("a different token was limited")
+	}
+}
+
 func TestSlidingWindowExpires(t *testing.T) {
 	limiter := newSlidingLimiter(1, time.Minute)
 	start := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
