@@ -4,6 +4,7 @@ import { JobDetail } from './components/JobDetail';
 import { Stats } from './components/Stats';
 import { NewJobModal } from './components/NewJobModal';
 import { AlertChannels } from './components/AlertChannels';
+import { BillingBanner } from './components/BillingBanner';
 import { PlusIcon } from '@heroicons/react/24/outline';
 import type { Job } from './types';
 
@@ -331,6 +332,7 @@ function App() {
           ) : (
             <>
               <p className="mb-4 text-sm text-gray-600 sm:hidden">{account.email}</p>
+              <BillingBanner apiUrl={API_URL} jobCount={jobs.length} />
               <AlertChannels apiUrl={API_URL} />
               <Stats {...stats} />
 

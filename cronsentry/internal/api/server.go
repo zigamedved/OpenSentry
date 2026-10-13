@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +26,8 @@ type Server struct {
 	authIP         *slidingLimiter
 	rateWindow     time.Duration
 	allowedOrigins map[string]struct{}
+	billing        billingConfig
+	dashboardURL   string
 }
 
 func NewServer(database *db.Database, logger *log.Logger) *Server {
@@ -38,6 +41,8 @@ func NewServer(database *db.Database, logger *log.Logger) *Server {
 		authIP:         newSlidingLimiter(authPerIPLimit, window),
 		rateWindow:     window,
 		allowedOrigins: allowedOriginsFromEnv(logger),
+		billing:        billingConfigFromEnv(logger),
+		dashboardURL:   strings.TrimSpace(os.Getenv("DASHBOARD_URL")),
 	}
 }
 
@@ -58,6 +63,10 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("POST /api/ping/{token}", s.handlePing)
 	mux.HandleFunc("GET /api/channels", s.handleListChannels)
 	mux.HandleFunc("PUT /api/channels/{kind}", s.handlePutChannel)
+	mux.HandleFunc("GET /api/billing", s.handleBilling)
+	mux.HandleFunc("POST /api/billing/checkout", s.handleBillingCheckout)
+	mux.HandleFunc("POST /api/billing/portal", s.handleBillingPortal)
+	mux.HandleFunc("POST /api/stripe/webhook", s.handleStripeWebhook)
 	return s.corsMiddleware(s.loggingMiddleware(s.recoveryMiddleware(s.rateLimitMiddleware(s.authMiddleware(mux)))))
 }
 
@@ -72,7 +81,7 @@ func publicPath(method, path string) bool {
 	if path == "/healthz" || strings.HasPrefix(path, "/api/ping/") {
 		return true
 	}
-	if method == http.MethodPost && (path == "/api/register" || path == "/api/login" || path == "/api/logout") {
+	if method == http.MethodPost && (path == "/api/register" || path == "/api/login" || path == "/api/logout" || path == "/api/stripe/webhook") {
 		return true
 	}
 	return false
@@ -218,6 +227,10 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.logger.Println("Error calculating next tick")
 		http.Error(w, "Error calculating next tick", http.StatusBadRequest)
+		return
+	}
+
+	if !s.allowNewJob(w, r, jobRequest.Schedule) {
 		return
 	}
 
@@ -438,6 +451,9 @@ func (s *Server) handleUpdateJob(w http.ResponseWriter, r *http.Request) {
 		job.Description = *jobRequest.Description
 	}
 	if jobRequest.Schedule != nil && *jobRequest.Schedule != "" {
+		if !s.allowSchedule(w, r, *jobRequest.Schedule) {
+			return
+		}
 		if err := applyScheduleChange(job, *jobRequest.Schedule); err != nil {
 			s.logger.Println("Invalid CRON schedule provided")
 			http.Error(w, "Invalid CRON schedule provided", http.StatusBadRequest)
