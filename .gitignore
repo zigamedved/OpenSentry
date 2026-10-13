@@ -1,4 +1,8 @@
 .qodo
-.cursor
+# Local Cursor state stays untracked. Shared rules are the exception so agents
+# load them on every run.
+.cursor/*
+!.cursor/rules/
+!.cursor/rules/**
 
 .DS_Store
