@@ -1,0 +1,6 @@
+---
+description: Read the OpenSentry mistake log before changing the repo
+alwaysApply: true
+---
+
+Read `AGENTS.md` at the repository root before changing code, CI, schema, or docs. It is the growing log of mistakes and wrong assumptions that already broke CI, tests, reviews, or the user flow. Add an entry when you uncover another one. Correct an entry in place when the code changes. Do not delete history.
