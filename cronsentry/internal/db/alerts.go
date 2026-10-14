@@ -84,8 +84,11 @@ func (d *Database) SyncEnvAlertChannels(userID, slackURL, discordURL string) err
 // Callers run this inside the same transaction as the job status change.
 func enqueueAlerts(tx *sql.Tx, userID, jobID, jobName, event string, when time.Time) error {
 	message := fmt.Sprintf("Job '%s' has missed its scheduled run time", jobName)
-	if event == "recovery" {
+	switch event {
+	case "recovery":
 		message = fmt.Sprintf("Job '%s' recovered", jobName)
+	case "fail":
+		message = fmt.Sprintf("Job '%s' reported a failure", jobName)
 	}
 
 	if err := insertNotification(tx, userID, jobID, message, "email", "{}", when); err != nil {

@@ -717,6 +717,206 @@ func TestAccounts(t *testing.T) {
 	}
 }
 
+func TestPingStartFailAndBody(t *testing.T) {
+	srv := newBehaviorServer(t)
+	created := do(t, srv, http.MethodPost, "/api/jobs", `{
+		"name": "Nightly backup",
+		"schedule": "0 0 * * *",
+		"grace_time": 15
+	}`)
+	if created.StatusCode != http.StatusCreated {
+		t.Fatalf("create = %d %s", created.StatusCode, created.Body)
+	}
+	job := decodeJob(t, created.Body)
+	before := decodeJob(t, do(t, srv, http.MethodGet, "/api/jobs/"+job.ID, "").Body)
+
+	started := do(t, srv, http.MethodPost, "/api/ping/"+job.PingToken+"/start", "boot log\n")
+	if started.StatusCode != http.StatusOK || started.Body != `{"status":"ok"}` {
+		t.Fatalf("start = %d %q", started.StatusCode, started.Body)
+	}
+	afterStart := decodeJob(t, do(t, srv, http.MethodGet, "/api/jobs/"+job.ID, "").Body)
+	if afterStart.StartedAt == nil {
+		t.Fatal("start did not set started_at")
+	}
+	if afterStart.LastBody != "boot log\n" {
+		t.Fatalf("last_body = %q", afterStart.LastBody)
+	}
+	if afterStart.Status != models.StatusHealthy {
+		t.Fatalf("start changed status to %s", afterStart.Status)
+	}
+	if !afterStart.NextExpect.Equal(before.NextExpect) || !afterStart.LastPing.Equal(before.LastPing) {
+		t.Fatalf("start moved the schedule or last ping: next %s -> %s last %s -> %s", before.NextExpect, afterStart.NextExpect, before.LastPing, afterStart.LastPing)
+	}
+
+	finished := do(t, srv, http.MethodPost, "/api/ping/"+job.PingToken, "done\n")
+	if finished.StatusCode != http.StatusOK || finished.Body != `{"status":"ok"}` {
+		t.Fatalf("success = %d %q", finished.StatusCode, finished.Body)
+	}
+	afterSuccess := decodeJob(t, do(t, srv, http.MethodGet, "/api/jobs/"+job.ID, "").Body)
+	if afterSuccess.StartedAt != nil {
+		t.Fatal("success left the run in progress")
+	}
+	if afterSuccess.LastDurationMs == nil || *afterSuccess.LastDurationMs < 0 {
+		t.Fatalf("last_duration_ms = %v", afterSuccess.LastDurationMs)
+	}
+	if afterSuccess.LastBody != "done\n" {
+		t.Fatalf("last_body after success = %q", afterSuccess.LastBody)
+	}
+	events := decodeEvents(t, do(t, srv, http.MethodGet, "/api/jobs/"+job.ID+"/events?limit=100", "").Body)
+	if len(events) < 2 || events[0].Type != models.TypePing || events[1].Type != models.TypeStart {
+		t.Fatalf("events = %+v", events)
+	}
+	var pingData struct {
+		Body       string `json:"body"`
+		DurationMs *int64 `json:"duration_ms"`
+	}
+	if err := json.Unmarshal([]byte(events[0].Data), &pingData); err != nil {
+		t.Fatal(err)
+	}
+	if pingData.Body != "done\n" || pingData.DurationMs == nil {
+		t.Fatalf("ping data = %+v", pingData)
+	}
+	if countNotifications(t, job.ID) != 0 {
+		t.Fatal("start or success sent an alert")
+	}
+
+	failed := do(t, srv, http.MethodPost, "/api/ping/"+job.PingToken+"/fail", "boom")
+	if failed.StatusCode != http.StatusOK {
+		t.Fatalf("fail = %d %s", failed.StatusCode, failed.Body)
+	}
+	afterFail := decodeJob(t, do(t, srv, http.MethodGet, "/api/jobs/"+job.ID, "").Body)
+	if afterFail.Status != models.StatusMissing || afterFail.LastBody != "boom" {
+		t.Fatalf("after fail = %s %q", afterFail.Status, afterFail.LastBody)
+	}
+	if messages := notificationMessages(t, job.ID); len(messages) != 1 || messages[0] != "Job 'Nightly backup' reported a failure" {
+		t.Fatalf("alerts = %v", messages)
+	}
+	again := do(t, srv, http.MethodPost, "/api/ping/"+job.PingToken+"/fail", "again")
+	if again.StatusCode != http.StatusOK {
+		t.Fatalf("second fail = %d", again.StatusCode)
+	}
+	if decodeJob(t, do(t, srv, http.MethodGet, "/api/jobs/"+job.ID, "").Body).Status != models.StatusMissing {
+		t.Fatal("second fail cleared missing")
+	}
+	if len(notificationMessages(t, job.ID)) != 1 {
+		t.Fatal("second fail sent another alert")
+	}
+
+	recovered := do(t, srv, http.MethodPost, "/api/ping/"+job.PingToken, "")
+	if recovered.StatusCode != http.StatusOK {
+		t.Fatalf("recovery = %d", recovered.StatusCode)
+	}
+	afterRecovery := decodeJob(t, do(t, srv, http.MethodGet, "/api/jobs/"+job.ID, "").Body)
+	if afterRecovery.Status != models.StatusHealthy {
+		t.Fatalf("status after recovery = %s", afterRecovery.Status)
+	}
+	if afterRecovery.LastBody != "again" {
+		t.Fatalf("empty success cleared last body: %q", afterRecovery.LastBody)
+	}
+	recoveryEvents := decodeEvents(t, do(t, srv, http.MethodGet, "/api/jobs/"+job.ID+"/events?limit=1", "").Body)
+	if len(recoveryEvents) != 1 || recoveryEvents[0].Type != models.TypeRecovery {
+		t.Fatalf("recovery event = %+v", recoveryEvents)
+	}
+	if len(notificationMessages(t, job.ID)) != 2 {
+		t.Fatal("recovery did not alert")
+	}
+
+	paused := do(t, srv, http.MethodPut, "/api/jobs/"+job.ID, `{"status":"paused"}`)
+	if paused.StatusCode != http.StatusOK {
+		t.Fatalf("pause = %d %s", paused.StatusCode, paused.Body)
+	}
+	pausedFail := do(t, srv, http.MethodPost, "/api/ping/"+job.PingToken+"/fail", "paused-fail")
+	if pausedFail.StatusCode != http.StatusOK {
+		t.Fatalf("paused fail = %d", pausedFail.StatusCode)
+	}
+	afterPaused := decodeJob(t, do(t, srv, http.MethodGet, "/api/jobs/"+job.ID, "").Body)
+	if afterPaused.Status != models.StatusPaused || afterPaused.LastBody != "paused-fail" {
+		t.Fatalf("paused fail = %s %q", afterPaused.Status, afterPaused.LastBody)
+	}
+	if len(notificationMessages(t, job.ID)) != 2 {
+		t.Fatal("fail while paused sent an alert")
+	}
+
+	byID := do(t, srv, http.MethodPost, "/api/ping/"+job.ID+"/start", "")
+	if byID.StatusCode != http.StatusNotFound || strings.TrimSpace(byID.Body) != "Job not found" {
+		t.Fatalf("start by job id = %d %q", byID.StatusCode, byID.Body)
+	}
+	unknown := do(t, srv, http.MethodPost, "/api/ping/does-not-exist/fail", "")
+	if unknown.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown fail = %d", unknown.StatusCode)
+	}
+
+	big := do(t, srv, http.MethodPost, "/api/ping/"+job.PingToken, strings.Repeat("y", 64*1024+80))
+	if big.StatusCode != http.StatusOK {
+		t.Fatalf("big ping = %d", big.StatusCode)
+	}
+	capped := decodeJob(t, do(t, srv, http.MethodGet, "/api/jobs/"+job.ID, "").Body)
+	if len(capped.LastBody) != 64*1024 {
+		t.Fatalf("capped body length = %d", len(capped.LastBody))
+	}
+	bigEvents := decodeEvents(t, do(t, srv, http.MethodGet, "/api/jobs/"+job.ID+"/events?limit=1", "").Body)
+	var bigData struct {
+		Truncated bool `json:"truncated"`
+	}
+	if err := json.Unmarshal([]byte(bigEvents[0].Data), &bigData); err != nil || !bigData.Truncated {
+		t.Fatalf("truncated data = %s %v", bigEvents[0].Data[:40], err)
+	}
+
+	for i := 0; i < 21; i++ {
+		resp := do(t, srv, http.MethodPost, "/api/ping/"+job.PingToken, fmt.Sprintf("log-%d", i))
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("log %d = %d", i, resp.StatusCode)
+		}
+	}
+	latest := decodeJob(t, do(t, srv, http.MethodGet, "/api/jobs/"+job.ID, "").Body)
+	if latest.LastBody != "log-20" {
+		t.Fatalf("last body = %q", latest.LastBody)
+	}
+	kept := 0
+	for _, event := range decodeEvents(t, do(t, srv, http.MethodGet, "/api/jobs/"+job.ID+"/events?limit=100", "").Body) {
+		if strings.Contains(event.Data, `"body"`) {
+			kept++
+		}
+		if strings.Contains(event.Data, "boot log") {
+			t.Fatal("oldest body was retained")
+		}
+	}
+	if kept != 20 {
+		t.Fatalf("events with a body = %d, want 20", kept)
+	}
+}
+
+func countNotifications(t *testing.T, jobID string) int {
+	t.Helper()
+	return len(notificationMessages(t, jobID))
+}
+
+func notificationMessages(t *testing.T, jobID string) []string {
+	t.Helper()
+	database, err := db.NewDatabase()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	rows, err := database.GetDB().Query(`SELECT message FROM notifications WHERE job_id = $1 ORDER BY created_at, id`, jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var messages []string
+	for rows.Next() {
+		var message string
+		if err := rows.Scan(&message); err != nil {
+			t.Fatal(err)
+		}
+		messages = append(messages, message)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return messages
+}
+
 func decodeEvents(t *testing.T, body string) []models.JobEvent {
 	t.Helper()
 	var events []models.JobEvent

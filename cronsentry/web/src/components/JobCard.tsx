@@ -8,9 +8,10 @@ interface JobCardProps {
   onDelete: (id: string) => Promise<string | null>;
 }
 
-export function pingCurl(apiOrigin: string, pingToken: string) {
+export function pingCurl(apiOrigin: string, pingToken: string, suffix = '') {
   const root = apiOrigin.replace(/\/$/, '');
-  return `curl -X POST ${root}/api/ping/${pingToken}`;
+  const path = suffix ? `/${suffix}` : '';
+  return `curl -X POST ${root}/api/ping/${pingToken}${path}`;
 }
 
 const statusColors: Record<string, string> = {
@@ -20,24 +21,23 @@ const statusColors: Record<string, string> = {
   paused: 'bg-gray-100 text-gray-800',
 };
 
-export function PingCommand({ apiOrigin, pingToken }: { apiOrigin: string; pingToken: string }) {
+function CopyLine({ label, value, hint }: { label: string; value: string; hint?: string }) {
   const [copied, setCopied] = useState(false);
-  const curl = pingCurl(apiOrigin, pingToken);
 
   return (
     <div>
-      <p className="text-xs font-medium text-gray-500">Ping command</p>
-      <p className="mt-1 text-xs text-gray-500">Treat this URL like a password. Do not commit it, paste it in chat, or put it in a screenshot. Anyone who has it can record a ping.</p>
+      <p className="text-xs font-medium text-gray-500">{label}</p>
+      {hint ? <p className="mt-1 text-xs text-gray-500">{hint}</p> : null}
       <div className="mt-2 flex items-center gap-2">
-        <code className="block flex-1 overflow-x-auto rounded bg-gray-50 px-2 py-1 text-xs text-gray-800">{curl}</code>
+        <code className="block flex-1 overflow-x-auto rounded bg-gray-50 px-2 py-1 text-xs text-gray-800">{value}</code>
         <button
           type="button"
           onClick={async () => {
             try {
-              await navigator.clipboard.writeText(curl);
+              await navigator.clipboard.writeText(value);
             } catch {
               const area = document.createElement('textarea');
-              area.value = curl;
+              area.value = value;
               document.body.appendChild(area);
               area.select();
               document.execCommand('copy');
@@ -51,6 +51,36 @@ export function PingCommand({ apiOrigin, pingToken }: { apiOrigin: string; pingT
           {copied ? 'Copied' : 'Copy'}
         </button>
       </div>
+    </div>
+  );
+}
+
+export function PingCommand({ apiOrigin, pingToken }: { apiOrigin: string; pingToken: string }) {
+  return (
+    <CopyLine
+      label="Ping command"
+      value={pingCurl(apiOrigin, pingToken)}
+      hint="Treat this URL like a password. Do not commit it, paste it in chat, or put it in a screenshot. Anyone who has it can record a ping."
+    />
+  );
+}
+
+export function PingSignals({ apiOrigin, pingToken }: { apiOrigin: string; pingToken: string }) {
+  return (
+    <div className="mt-4 space-y-3">
+      <CopyLine
+        label="Start"
+        value={pingCurl(apiOrigin, pingToken, 'start')}
+        hint="Call when the job begins. A later success ping records how long it ran."
+      />
+      <CopyLine
+        label="Fail"
+        value={pingCurl(apiOrigin, pingToken, 'fail')}
+        hint="Call on a non-zero exit. The job is marked missing immediately."
+      />
+      <p className="text-xs text-gray-500">
+        Add <code className="rounded bg-gray-50 px-1">--data-binary @log.txt</code> to store output. OpenSentry keeps 64KB per ping and the 20 newest logs.
+      </p>
     </div>
   );
 }

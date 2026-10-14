@@ -53,6 +53,12 @@ ALTER TABLE jobs ADD COLUMN IF NOT EXISTS ping_token VARCHAR(64);
 UPDATE jobs SET ping_token = id WHERE ping_token IS NULL OR ping_token = '';
 ALTER TABLE jobs ALTER COLUMN ping_token SET NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_ping_token ON jobs (ping_token);
+
+-- Start/fail signals. started_at is set by /start and cleared by success or /fail.
+-- last_body is the newest non-empty ping output, capped by the API.
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS last_duration_ms BIGINT;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS last_body TEXT NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS idx_job_events_job_id ON job_events(job_id);
 CREATE INDEX IF NOT EXISTS idx_job_events_created_at ON job_events(created_at);
 CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON notifications(user_id);

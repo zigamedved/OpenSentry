@@ -13,24 +13,29 @@ const (
 )
 
 type Job struct {
-	ID          string    `json:"id" db:"id"`
-	Name        string    `json:"name" db:"name"`
-	Description string    `json:"description" db:"description"`
-	Schedule    string    `json:"schedule" db:"schedule"`
-	GraceTime   int       `json:"grace_time" db:"grace_time"` // minutes
-	LastPing    time.Time `json:"last_ping" db:"last_ping"`
-	NextExpect  time.Time `json:"next_expect" db:"next_expect"`
-	Status      JobStatus `json:"status" db:"status"`
-	UserID      string    `json:"user_id" db:"user_id"`
-	PingToken   string    `json:"ping_token" db:"ping_token"`
-	CreatedAt   time.Time `json:"created_at" db:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
+	ID             string     `json:"id" db:"id"`
+	Name           string     `json:"name" db:"name"`
+	Description    string     `json:"description" db:"description"`
+	Schedule       string     `json:"schedule" db:"schedule"`
+	GraceTime      int        `json:"grace_time" db:"grace_time"` // minutes
+	LastPing       time.Time  `json:"last_ping" db:"last_ping"`
+	NextExpect     time.Time  `json:"next_expect" db:"next_expect"`
+	Status         JobStatus  `json:"status" db:"status"`
+	UserID         string     `json:"user_id" db:"user_id"`
+	PingToken      string     `json:"ping_token" db:"ping_token"`
+	StartedAt      *time.Time `json:"started_at,omitempty" db:"started_at"`
+	LastDurationMs *int64     `json:"last_duration_ms,omitempty" db:"last_duration_ms"`
+	LastBody       string     `json:"last_body,omitempty" db:"last_body"`
+	CreatedAt      time.Time  `json:"created_at" db:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at" db:"updated_at"`
 }
 
 type JobEventType string
 
 const (
 	TypePing     JobEventType = "ping"
+	TypeStart    JobEventType = "start"
+	TypeFail     JobEventType = "fail"
 	TypeMiss     JobEventType = "miss"
 	TypeRecovery JobEventType = "recovery"
 )

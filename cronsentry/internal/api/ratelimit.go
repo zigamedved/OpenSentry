@@ -65,6 +65,16 @@ func (l *slidingLimiter) allow(key string, now time.Time) bool {
 	return true
 }
 
+// pingLimitKey is the ping token, ignoring /start and /fail.
+// Those signals share the per-URL budget with the success ping.
+func pingLimitKey(path string) string {
+	rest := strings.TrimPrefix(path, "/api/ping/")
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		rest = rest[:i]
+	}
+	return rest
+}
+
 func clientIP(r *http.Request) string {
 	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
 		first := strings.TrimSpace(strings.Split(fwd, ",")[0])
@@ -95,8 +105,7 @@ func (s *Server) rateLimitMiddleware(next http.Handler) http.Handler {
 				writeTooMany(w, s.rateWindow)
 				return
 			}
-			token := strings.TrimPrefix(path, "/api/ping/")
-			if !s.pingJob.allow(token, time.Now()) {
+			if !s.pingJob.allow(pingLimitKey(path), time.Now()) {
 				writeTooMany(w, s.rateWindow)
 				return
 			}
