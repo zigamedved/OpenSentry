@@ -886,6 +886,161 @@ func TestPingStartFailAndBody(t *testing.T) {
 	}
 }
 
+func TestWorkspacesInviteAndExport(t *testing.T) {
+	srv := newBehaviorServer(t)
+	created := do(t, srv, http.MethodPost, "/api/jobs", `{"name":"Shared backup","schedule":"0 0 * * *","grace_time":5}`)
+	if created.StatusCode != http.StatusCreated {
+		t.Fatalf("create = %d %s", created.StatusCode, created.Body)
+	}
+	job := decodeJob(t, created.Body)
+
+	listed := do(t, srv, http.MethodGet, "/api/workspaces", "")
+	if listed.StatusCode != http.StatusOK {
+		t.Fatalf("workspaces = %d %s", listed.StatusCode, listed.Body)
+	}
+	var workspaces []models.Workspace
+	if err := json.Unmarshal([]byte(listed.Body), &workspaces); err != nil {
+		t.Fatal(err)
+	}
+	if len(workspaces) != 1 || workspaces[0].Role != models.RoleAdmin || !workspaces[0].Active {
+		t.Fatalf("workspaces = %+v", workspaces)
+	}
+	if job.WorkspaceID != workspaces[0].ID {
+		t.Fatalf("job workspace = %q, active = %q", job.WorkspaceID, workspaces[0].ID)
+	}
+	wsID := workspaces[0].ID
+
+	existing := registerSession(t, srv, "existing@example.com", "Existing")
+	if strings.TrimSpace(doAs(t, srv, existing.token, http.MethodGet, "/api/jobs", "").Body) != "[]" {
+		t.Fatal("existing user saw jobs before an invite")
+	}
+
+	invited := do(t, srv, http.MethodPost, "/api/workspaces/"+wsID+"/invites", `{"email":"existing@example.com","role":"member"}`)
+	if invited.StatusCode != http.StatusCreated {
+		t.Fatalf("invite existing = %d %s", invited.StatusCode, invited.Body)
+	}
+	var invite models.WorkspaceInvite
+	if err := json.Unmarshal([]byte(invited.Body), &invite); err != nil || invite.Token == "" {
+		t.Fatalf("invite = %s %v", invited.Body, err)
+	}
+	if strings.TrimSpace(doAs(t, srv, existing.token, http.MethodGet, "/api/jobs", "").Body) != "[]" {
+		t.Fatal("existing user saw the job before accepting")
+	}
+	outsider := registerSession(t, srv, "outsider@example.com", "Outsider")
+	mismatch := doAs(t, srv, outsider.token, http.MethodPost, "/api/workspaces/invites/"+invite.Token+"/accept", "")
+	if mismatch.StatusCode != http.StatusForbidden || strings.TrimSpace(mismatch.Body) != "This invite is for a different email" {
+		t.Fatalf("wrong email = %d %q", mismatch.StatusCode, mismatch.Body)
+	}
+	accepted := doAs(t, srv, existing.token, http.MethodPost, "/api/workspaces/invites/"+invite.Token+"/accept", "")
+	if accepted.StatusCode != http.StatusOK {
+		t.Fatalf("accept = %d %s", accepted.StatusCode, accepted.Body)
+	}
+	shared := decodeJobs(t, doAs(t, srv, existing.token, http.MethodGet, "/api/jobs", "").Body)
+	if len(shared) != 1 || shared[0].ID != job.ID {
+		t.Fatalf("accepted list = %+v", shared)
+	}
+	again := doAs(t, srv, existing.token, http.MethodPost, "/api/workspaces/invites/"+invite.Token+"/accept", "")
+	if again.StatusCode != http.StatusOK {
+		t.Fatalf("re-accept = %d %s", again.StatusCode, again.Body)
+	}
+
+	pendingNew := do(t, srv, http.MethodPost, "/api/workspaces/"+wsID+"/invites", `{"email":"newcomer@example.com"}`)
+	if pendingNew.StatusCode != http.StatusCreated {
+		t.Fatalf("invite newcomer = %d %s", pendingNew.StatusCode, pendingNew.Body)
+	}
+	newcomer := registerSession(t, srv, "newcomer@example.com", "Newcomer")
+	auto := decodeJobs(t, doAs(t, srv, newcomer.token, http.MethodGet, "/api/jobs", "").Body)
+	if len(auto) != 1 || auto[0].ID != job.ID {
+		t.Fatalf("register-after-invite list = %+v", auto)
+	}
+	forbidden := doAs(t, srv, newcomer.token, http.MethodPost, "/api/workspaces/"+wsID+"/invites", `{"email":"other@example.com"}`)
+	if forbidden.StatusCode != http.StatusForbidden || strings.TrimSpace(forbidden.Body) != "Admin role required" {
+		t.Fatalf("member invite = %d %q", forbidden.StatusCode, forbidden.Body)
+	}
+
+	badRole := do(t, srv, http.MethodPost, "/api/workspaces/"+wsID+"/invites", `{"email":"bad-role@example.com","role":"owner"}`)
+	if badRole.StatusCode != http.StatusBadRequest || strings.TrimSpace(badRole.Body) != "role must be admin or member" {
+		t.Fatalf("bad role = %d %q", badRole.StatusCode, badRole.Body)
+	}
+	demote := do(t, srv, http.MethodPut, "/api/workspaces/"+wsID+"/members/"+behaviorUserID, `{"role":"member"}`)
+	if demote.StatusCode != http.StatusBadRequest || strings.TrimSpace(demote.Body) != "A workspace needs an admin" {
+		t.Fatalf("demote last admin = %d %q", demote.StatusCode, demote.Body)
+	}
+	duplicate := do(t, srv, http.MethodPost, "/api/workspaces/"+wsID+"/invites", `{"email":"existing@example.com"}`)
+	if duplicate.StatusCode != http.StatusConflict || strings.TrimSpace(duplicate.Body) != "Already a member" {
+		t.Fatalf("duplicate = %d %q", duplicate.StatusCode, duplicate.Body)
+	}
+
+	foreign := doAs(t, srv, outsider.token, http.MethodGet, "/api/workspaces/"+wsID+"/export?from=2026-10-01T00:00:00Z&to=2026-10-02T00:00:00Z", "")
+	if foreign.StatusCode != http.StatusNotFound || strings.TrimSpace(foreign.Body) != "Workspace not found" {
+		t.Fatalf("outsider export = %d %q", foreign.StatusCode, foreign.Body)
+	}
+	inverted := do(t, srv, http.MethodGet, "/api/workspaces/"+wsID+"/export?from=2026-10-02T00:00:00Z&to=2026-10-01T00:00:00Z", "")
+	if inverted.StatusCode != http.StatusBadRequest || strings.TrimSpace(inverted.Body) != "from must be before to" {
+		t.Fatalf("inverted = %d %q", inverted.StatusCode, inverted.Body)
+	}
+
+	pinged := do(t, srv, http.MethodPost, "/api/ping/"+job.PingToken, "shared log")
+	if pinged.StatusCode != http.StatusOK {
+		t.Fatalf("ping = %d %s", pinged.StatusCode, pinged.Body)
+	}
+	from := time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)
+	to := time.Now().UTC().Add(time.Hour).Format(time.RFC3339)
+	exported := do(t, srv, http.MethodGet, "/api/workspaces/"+wsID+"/export?from="+from+"&to="+to, "")
+	if exported.StatusCode != http.StatusOK {
+		t.Fatalf("export = %d %s", exported.StatusCode, exported.Body)
+	}
+	var audit db.WorkspaceExport
+	if err := json.Unmarshal([]byte(exported.Body), &audit); err != nil {
+		t.Fatal(err)
+	}
+	if audit.Truncated || len(audit.Events) == 0 || audit.Events[0].Type != "ping" || audit.Events[0].JobName != "Shared backup" {
+		t.Fatalf("export = %+v", audit)
+	}
+	csvBody := do(t, srv, http.MethodGet, "/api/workspaces/"+wsID+"/export?format=csv&from="+from+"&to="+to, "")
+	if csvBody.StatusCode != http.StatusOK || !strings.Contains(csvBody.Body, "event") || !strings.Contains(csvBody.Body, "Shared backup") {
+		t.Fatalf("csv = %d %q", csvBody.StatusCode, csvBody.Body)
+	}
+
+	removed := do(t, srv, http.MethodDelete, "/api/workspaces/"+wsID+"/members/"+existing.id, "")
+	if removed.StatusCode != http.StatusNoContent {
+		t.Fatalf("remove = %d %s", removed.StatusCode, removed.Body)
+	}
+	after := decodeJobs(t, doAs(t, srv, existing.token, http.MethodGet, "/api/jobs", "").Body)
+	for _, item := range after {
+		if item.ID == job.ID {
+			t.Fatal("removed member still sees the job")
+		}
+	}
+	missing := doAs(t, srv, existing.token, http.MethodGet, "/api/jobs/"+job.ID, "")
+	if missing.StatusCode != http.StatusNotFound {
+		t.Fatalf("removed get = %d %s", missing.StatusCode, missing.Body)
+	}
+}
+
+type session struct {
+	token string
+	id    string
+}
+
+func registerSession(t *testing.T, srv *httptest.Server, email, name string) session {
+	t.Helper()
+	resp := doAs(t, srv, "", http.MethodPost, "/api/register", fmt.Sprintf(`{"email":%q,"password":"behavior-pass","name":%q}`, email, name))
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("register %s = %d %s", email, resp.StatusCode, resp.Body)
+	}
+	var body struct {
+		Token string `json:"token"`
+		User  struct {
+			ID string `json:"id"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal([]byte(resp.Body), &body); err != nil {
+		t.Fatal(err)
+	}
+	return session{token: body.Token, id: body.User.ID}
+}
+
 func countNotifications(t *testing.T, jobID string) int {
 	t.Helper()
 	return len(notificationMessages(t, jobID))

@@ -79,8 +79,8 @@ Copy this shape and put it under the matching heading. Lead with the date you fo
 ### 2026-10 — Another user's job is 404, not 401
 
 **Assumed:** A management call for a job id that exists but belongs to someone else should be 401 or 403, so the client can tell "forbidden" from "missing".
-**Actually:** `GetJobForUser` filters `id` and `user_id` together. A miss and a foreign job are the same result: 404 `Job not found`. Returning 401 after a row is found tells the caller the id exists. Ping is the exception: `POST /api/ping/{token}` does not check the session. Anyone with the ping token gets 200, including for another account's job.
-**Do this:** Keep management routes on 404 for foreign ids. Do not add an existence check that answers differently. Treat the ping URL as a password.
+**Actually:** `GetJobForUser` requires a workspace membership, not a matching `jobs.user_id`. A miss and a job in a workspace the caller does not belong to are the same result: 404 `Job not found`. Returning 401 after a row is found tells the caller the id exists. The job list is the caller's active workspace only. Ping is the exception: `POST /api/ping/{token}` does not check the session. Anyone with the ping token gets 200, including for another workspace's job.
+**Do this:** Keep management routes on 404 for ids outside the caller's workspaces. Do not add an existence check that answers differently. A teammate in the same workspace can read, edit, delete, and rotate the job. Treat the ping URL as a password. Billing and alert channels stay on the user who created the job.
 
 ### 2026-10 — Job updates are partial, and clients cannot mark a job missing
 

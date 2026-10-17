@@ -5,6 +5,7 @@ import { Stats } from './components/Stats';
 import { NewJobModal } from './components/NewJobModal';
 import { AlertChannels } from './components/AlertChannels';
 import { BillingBanner } from './components/BillingBanner';
+import { WorkspacePanel } from './components/WorkspacePanel';
 import { PlusIcon } from '@heroicons/react/24/outline';
 import type { Job } from './types';
 
@@ -258,7 +259,7 @@ function App() {
                 {mode === 'register' ? 'Create an account' : 'Sign in'}
               </h2>
               <p className="mt-1 text-sm text-gray-500">
-                Each account sees only its own jobs. Ping URLs stay public.
+                Jobs belong to a workspace. Invite teammates by email. Ping URLs stay public.
               </p>
               {formError ? <p className="mt-3 text-sm text-red-600">{formError}</p> : null}
               {mode === 'register' ? (
@@ -332,6 +333,7 @@ function App() {
           ) : (
             <>
               <p className="mb-4 text-sm text-gray-600 sm:hidden">{account.email}</p>
+              <WorkspacePanel apiUrl={API_URL} onChanged={() => { void fetchJobs(); }} onAuthError={onAuthError} />
               <BillingBanner apiUrl={API_URL} jobCount={jobs.length} />
               <AlertChannels apiUrl={API_URL} />
               <Stats {...stats} />
