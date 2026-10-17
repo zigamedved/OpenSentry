@@ -96,6 +96,76 @@ CREATE TABLE IF NOT EXISTS stripe_events (
     received_at TIMESTAMPTZ NOT NULL
 );
 
+-- Workspaces. Existing users get one personal workspace whose id matches
+-- the user id, and their jobs move to it. New users get a workspace from
+-- CreateUser. Jobs stay visible to every member of that workspace.
+CREATE TABLE IF NOT EXISTS workspaces (
+    id VARCHAR(36) PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS workspace_members (
+    workspace_id VARCHAR(36) NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role VARCHAR(20) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (workspace_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS workspace_invites (
+    id VARCHAR(36) PRIMARY KEY,
+    workspace_id VARCHAR(36) NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    email VARCHAR(255) NOT NULL,
+    role VARCHAR(20) NOT NULL,
+    token VARCHAR(64) NOT NULL UNIQUE,
+    invited_by VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL,
+    accepted_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_members_user ON workspace_members (user_id);
+CREATE INDEX IF NOT EXISTS idx_workspace_invites_email ON workspace_invites (email);
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS active_workspace_id VARCHAR(36);
+
+INSERT INTO workspaces (id, name, created_at, updated_at)
+SELECT u.id, u.name || '''s workspace', u.created_at, u.updated_at
+FROM users u
+WHERE NOT EXISTS (
+    SELECT 1 FROM workspace_members m WHERE m.user_id = u.id
+);
+
+INSERT INTO workspace_members (workspace_id, user_id, role, created_at)
+SELECT u.id, u.id, 'admin', u.created_at
+FROM users u
+WHERE NOT EXISTS (
+    SELECT 1 FROM workspace_members m WHERE m.user_id = u.id
+);
+
+UPDATE users
+SET active_workspace_id = id
+WHERE active_workspace_id IS NULL
+  AND EXISTS (
+      SELECT 1 FROM workspace_members m
+      WHERE m.user_id = users.id AND m.workspace_id = users.id
+  );
+
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS workspace_id VARCHAR(36);
+UPDATE jobs SET workspace_id = user_id WHERE workspace_id IS NULL OR workspace_id = '';
+ALTER TABLE jobs ALTER COLUMN workspace_id SET NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_jobs_workspace_id ON jobs (workspace_id);
+
+DO $$
+BEGIN
+    ALTER TABLE jobs
+        ADD CONSTRAINT jobs_workspace_id_fkey
+        FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE;
+EXCEPTION
+    WHEN duplicate_object THEN NULL;
+END $$;
+
 CREATE TABLE IF NOT EXISTS alert_channels (
     id VARCHAR(36) PRIMARY KEY,
     user_id VARCHAR(36) NOT NULL REFERENCES users(id) ON DELETE CASCADE,

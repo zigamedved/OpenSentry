@@ -69,6 +69,16 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("POST /api/billing/checkout", s.handleBillingCheckout)
 	mux.HandleFunc("POST /api/billing/portal", s.handleBillingPortal)
 	mux.HandleFunc("POST /api/stripe/webhook", s.handleStripeWebhook)
+	mux.HandleFunc("GET /api/workspaces", s.handleListWorkspaces)
+	mux.HandleFunc("POST /api/workspaces/{id}/switch", s.handleSwitchWorkspace)
+	mux.HandleFunc("GET /api/workspaces/{id}/members", s.handleListMembers)
+	mux.HandleFunc("PUT /api/workspaces/{id}/members/{userID}", s.handleSetMemberRole)
+	mux.HandleFunc("DELETE /api/workspaces/{id}/members/{userID}", s.handleRemoveMember)
+	mux.HandleFunc("POST /api/workspaces/{id}/invites", s.handleCreateInvite)
+	mux.HandleFunc("GET /api/workspaces/{id}/invites", s.handleListWorkspaceInvites)
+	mux.HandleFunc("GET /api/workspaces/{id}/export", s.handleExportWorkspace)
+	mux.HandleFunc("GET /api/invites", s.handleListMyInvites)
+	mux.HandleFunc("POST /api/workspaces/invites/{token}/accept", s.handleAcceptInvite)
 	return s.corsMiddleware(s.loggingMiddleware(s.recoveryMiddleware(s.rateLimitMiddleware(s.authMiddleware(mux)))))
 }
 
@@ -236,6 +246,12 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	active, err := s.db.ActiveWorkspace(currentUserID(r))
+	if err != nil {
+		s.logger.Printf("Error loading active workspace: %v", err)
+		http.Error(w, "Failed to create job", http.StatusInternalServerError)
+		return
+	}
 	job := &models.Job{
 		ID:          uuid.New().String(),
 		Name:        jobRequest.Name,
@@ -246,6 +262,7 @@ func (s *Server) handleCreateJob(w http.ResponseWriter, r *http.Request) {
 		LastPing:    time.Now().UTC(),
 		NextExpect:  nextTick,
 		UserID:      currentUserID(r),
+		WorkspaceID: active.ID,
 		CreatedAt:   time.Now().UTC(),
 		UpdatedAt:   time.Now().UTC(),
 	}

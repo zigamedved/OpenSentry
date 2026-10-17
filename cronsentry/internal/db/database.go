@@ -67,7 +67,7 @@ func scanJobFields(job *models.Job) []any {
 		&job.ID, &job.Name, &job.Description, &job.Schedule,
 		&job.GraceTime, &job.LastPing, &job.NextExpect,
 		&job.Status, &job.UserID, &job.CreatedAt, &job.UpdatedAt, &job.PingToken,
-		&job.StartedAt, &job.LastDurationMs, &job.LastBody,
+		&job.StartedAt, &job.LastDurationMs, &job.LastBody, &job.WorkspaceID,
 	}
 }
 
@@ -86,7 +86,7 @@ func (d *Database) scanJob(row *sql.Row) (*models.Job, error) {
 const jobSelect = `
 	SELECT id, name, description, schedule, grace_time,
 	       last_ping, next_expect, status, user_id, created_at, updated_at, ping_token,
-	       started_at, last_duration_ms, last_body
+	       started_at, last_duration_ms, last_body, workspace_id
 	FROM jobs
 `
 
@@ -94,10 +94,14 @@ func (d *Database) GetJob(id string) (*models.Job, error) {
 	return d.scanJob(d.db.QueryRow(jobSelect+` WHERE id = $1`, id))
 }
 
-// GetJobForUser returns the job only when it belongs to userID.
-// A missing row and a job owned by someone else both come back as (nil, nil).
+// GetJobForUser returns the job when userID is a member of its workspace.
+// A missing row and a job in someone else's workspace both come back as (nil, nil).
 func (d *Database) GetJobForUser(id, userID string) (*models.Job, error) {
-	return d.scanJob(d.db.QueryRow(jobSelect+` WHERE id = $1 AND user_id = $2`, id, userID))
+	return d.scanJob(d.db.QueryRow(jobSelect+`
+		WHERE id = $1 AND EXISTS (
+			SELECT 1 FROM workspace_members m
+			WHERE m.workspace_id = jobs.workspace_id AND m.user_id = $2
+		)`, id, userID))
 }
 
 func (d *Database) GetJobByPingToken(token string) (*models.Job, error) {
@@ -105,7 +109,9 @@ func (d *Database) GetJobByPingToken(token string) (*models.Job, error) {
 }
 
 func (d *Database) ListJobsByUser(userID string) ([]*models.Job, error) {
-	rows, err := d.db.Query(jobSelect+` WHERE user_id = $1 ORDER BY created_at DESC`, userID)
+	rows, err := d.db.Query(jobSelect+`
+		WHERE workspace_id = (SELECT active_workspace_id FROM users WHERE id = $1)
+		ORDER BY created_at DESC`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("error querying jobs: %w", err)
 	}
@@ -134,6 +140,14 @@ func (d *Database) CreateJob(job *models.Job) error {
 	if job.PingToken == "" {
 		job.PingToken = uuid.New().String()
 	}
+	if job.WorkspaceID == "" {
+		if err := d.EnsurePersonalWorkspace(job.UserID); err != nil {
+			return err
+		}
+		if err := d.db.QueryRow(`SELECT active_workspace_id FROM users WHERE id = $1`, job.UserID).Scan(&job.WorkspaceID); err != nil {
+			return fmt.Errorf("error finding workspace: %w", err)
+		}
+	}
 
 	now := time.Now().UTC()
 	job.CreatedAt = now
@@ -141,13 +155,13 @@ func (d *Database) CreateJob(job *models.Job) error {
 
 	query := `
 		INSERT INTO jobs (id, name, description, schedule, grace_time,
-		                 last_ping, next_expect, status, user_id, created_at, updated_at, ping_token)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		                 last_ping, next_expect, status, user_id, created_at, updated_at, ping_token, workspace_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 	`
 	_, err := d.db.Exec(query,
 		job.ID, job.Name, job.Description, job.Schedule,
 		job.GraceTime, job.LastPing, job.NextExpect,
-		job.Status, job.UserID, job.CreatedAt, job.UpdatedAt, job.PingToken,
+		job.Status, job.UserID, job.CreatedAt, job.UpdatedAt, job.PingToken, job.WorkspaceID,
 	)
 	if err != nil {
 		return fmt.Errorf("error creating job: %w", err)
@@ -193,7 +207,10 @@ func (d *Database) RotatePingToken(id, userID string) (*models.Job, error) {
 	result, err := d.db.Exec(`
 		UPDATE jobs
 		SET ping_token = $1, updated_at = $2
-		WHERE id = $3 AND user_id = $4
+		WHERE id = $3 AND EXISTS (
+			SELECT 1 FROM workspace_members m
+			WHERE m.workspace_id = jobs.workspace_id AND m.user_id = $4
+		)
 	`, token, now, id, userID)
 	if err != nil {
 		return nil, fmt.Errorf("error rotating ping token: %w", err)
@@ -235,7 +252,10 @@ func (d *Database) ListJobEvents(jobID, userID string, limit int) ([]*models.Job
 		SELECT e.id, e.job_id, e.type, e.data::text, e.created_at
 		FROM job_events e
 		JOIN jobs j ON j.id = e.job_id
-		WHERE e.job_id = $1 AND j.user_id = $2
+		WHERE e.job_id = $1 AND EXISTS (
+			SELECT 1 FROM workspace_members m
+			WHERE m.workspace_id = j.workspace_id AND m.user_id = $2
+		)
 		ORDER BY e.created_at DESC, e.id DESC
 		LIMIT $3
 	`, jobID, userID, limit)
@@ -259,7 +279,12 @@ func (d *Database) ListJobEvents(jobID, userID string, limit int) ([]*models.Job
 }
 
 func (d *Database) DeleteJob(id, userID string) error {
-	query := `DELETE FROM jobs WHERE id = $1 AND user_id = $2`
+	query := `
+		DELETE FROM jobs
+		WHERE id = $1 AND EXISTS (
+			SELECT 1 FROM workspace_members m
+			WHERE m.workspace_id = jobs.workspace_id AND m.user_id = $2
+		)`
 	result, err := d.db.Exec(query, id, userID)
 	if err != nil {
 		return fmt.Errorf("error deleting job: %w", err)

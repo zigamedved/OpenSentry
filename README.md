@@ -16,7 +16,7 @@ The Go module and Docker app live in [`cronsentry/`](cronsentry/). That director
 - **Email Notifications**: Get notified when jobs fail to run (SendGrid when configured; otherwise dry-run)
 - **Status Dashboard**: View the health of all your jobs in one place
 - **Slack and Discord**: Incoming webhooks for miss and recovery alerts
-- **Accounts**: Email and password. Each account sees only its own jobs.
+- **Accounts**: Email and password. Jobs belong to a workspace, which you can share with teammates.
 
 ## Dashboard
 
@@ -124,7 +124,7 @@ A limited request returns 429 `Too Many Requests` and `Retry-After: 60`. The cli
    docker compose up -d --build
    ```
 
-3. Open the dashboard at http://localhost:3000 (the API listens on http://localhost:8080) and create an account. Each account sees only its own jobs. Each job card shows a copyable `POST` curl. That ping URL is a secret, like a password. Do not commit it. Rotate it from the job page when it leaks; the old URL stops working immediately.
+3. Open the dashboard at http://localhost:3000 (the API listens on http://localhost:8080) and create an account. Jobs belong to the active workspace. Each job card shows a copyable `POST` curl. That ping URL is a secret, like a password. Do not commit it. Rotate it from the job page when it leaks; the old URL stops working immediately.
 
 4. Run the copied ping (or the example below). Refresh the dashboard. The job's last ping time updates and the status stays healthy.
 
@@ -179,6 +179,16 @@ Accounts use email and password. Passwords are stored as bcrypt hashes and are n
 Jobs created before accounts belong to `test-user` (`test@example.com`) and stay hidden from accounts you register later. Set `DEMO_SEED=true` and restart once to sign in as that user, or create a new account and new jobs. If `test@example.com` is already in the database, `DEMO_SEED` leaves its password unchanged (the old seed password was `secret`). A missing email is created as `opensentry-demo`.
 
 Compose does not configure an email provider. A missing `SENDGRID_API_KEY` is safe: alerts are logged and marked skipped, not failed. Create a SendGrid API key, verify the `EMAIL_FROM` sender, and set `SENDGRID_API_KEY` when you want real mail.
+
+## Workspaces
+
+Signing up creates a personal workspace and selects it. The job list is that active workspace. A teammate in the same workspace can open, edit, pause, delete, and rotate those jobs. Someone outside the workspace gets 404 `Job not found`, the same as a missing id. The ping URL stays public to anyone who has the token.
+
+Invite by email from the dashboard. OpenSentry does not send that email. An account that already exists sees an invite banner and joins with Accept, which also switches their active workspace. Registering an invited email joins every pending invite and selects the last one. Admins invite, change roles, and remove members. Members can manage jobs and export. A workspace always keeps one admin: demoting or removing the last admin is 400 `A workspace needs an admin`. Inviting someone who is already a member is 409 `Already a member`.
+
+Billing limits still follow the user who creates the check, not the workspace. Miss and failure alerts still go to that creator's email, Slack, and Discord channels.
+
+`GET /api/workspaces/{id}/export?from=2026-10-01T00:00:00Z&to=2026-10-02T00:00:00Z&format=json` returns job events and notifications for every job in the workspace. `from` is included and `to` is not. Both are required RFC3339 timestamps, `from` must be earlier, and the span cannot exceed 366 days. `format=csv` is one file with a `record` column of `event` or `notification`. Each table stops at 5000 rows and sets `truncated` when there is more. Any member can export. A workspace you do not belong to is 404.
 
 ## Slack and Discord
 
