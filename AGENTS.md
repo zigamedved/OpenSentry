@@ -162,10 +162,10 @@ Copy this shape and put it under the matching heading. Lead with the date you fo
 **Actually:** Create stores `last_ping` as the creation time and computes `next_expect` from the cron. The zero-time "Never" path is for a missing timestamp, not for a new job.
 **Do this:** Do not special-case a brand-new job as never pinged. Format a real timestamp.
 
-## Still broken
+## Notifications
 
 ### 2026-10-13 — Dry-run email never leaves `pending`
 
 **Assumed:** With `SENDGRID_API_KEY` unset, the processor logs the email and marks the notification skipped.
-**Actually:** `markNotificationStatus` uses `$1` both as the new `status` and in `CASE WHEN $1 = 'sent'`. Postgres rejects it with `pq: inconsistent types deduced for parameter $1`. The dry-run path logs "would send email" and then "Error marking notification as skipped". The row stays `pending`, so the same alert is attempted on every tick. `processor_test.go` only asserts that an unreachable database returns an error containing "skipped", so CI stays green.
-**Do this:** When you next touch notifications, give the status comparison its own parameter or cast so skipped, sent, and failed all update. Assert the row status against a real Postgres, not only an unreachable one. Until that lands, a local API with the default dry-run sender will retry old alerts forever and fill the log.
+**Actually:** `markNotificationStatus` used `$1` both as the new `status` and in `CASE WHEN $1 = 'sent'`. Postgres rejected it with `pq: inconsistent types deduced for parameter $1`. The dry-run path logged "would send email" and then "Error marking notification as skipped". The row stayed `pending`, so the same alert was attempted on every tick. `processor_test.go` only asserted that an unreachable database returns an error containing "skipped", so CI stayed green.
+**Do this:** Keep the status comparison on its own parameter (`$2`). `skipped`, `sent`, and `failed` must all update the row. A dry-run email is stored as `skipped` and is not selected again. Assert those statuses against Postgres, not only against an unreachable database.
