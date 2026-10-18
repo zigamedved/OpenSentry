@@ -22,6 +22,7 @@ type Job struct {
 	NextExpect     time.Time  `json:"next_expect" db:"next_expect"`
 	Status         JobStatus  `json:"status" db:"status"`
 	UserID         string     `json:"user_id" db:"user_id"`
+	WorkspaceID    string     `json:"workspace_id" db:"workspace_id"`
 	PingToken      string     `json:"ping_token" db:"ping_token"`
 	StartedAt      *time.Time `json:"started_at,omitempty" db:"started_at"`
 	LastDurationMs *int64     `json:"last_duration_ms,omitempty" db:"last_duration_ms"`
@@ -46,6 +47,37 @@ type JobEvent struct {
 	Type      JobEventType `json:"type" db:"type"`
 	Data      string       `json:"data" db:"data"` // additional data as JSON string
 	CreatedAt time.Time    `json:"created_at" db:"created_at"`
+}
+
+type WorkspaceRole string
+
+const (
+	RoleAdmin  WorkspaceRole = "admin"
+	RoleMember WorkspaceRole = "member"
+)
+
+type Workspace struct {
+	ID     string        `json:"id"`
+	Name   string        `json:"name"`
+	Role   WorkspaceRole `json:"role"`
+	Active bool          `json:"active"`
+}
+
+type WorkspaceMember struct {
+	UserID string        `json:"user_id"`
+	Email  string        `json:"email"`
+	Name   string        `json:"name"`
+	Role   WorkspaceRole `json:"role"`
+}
+
+type WorkspaceInvite struct {
+	ID            string        `json:"id"`
+	WorkspaceID   string        `json:"workspace_id"`
+	WorkspaceName string        `json:"workspace_name"`
+	Email         string        `json:"email"`
+	Role          WorkspaceRole `json:"role"`
+	Token         string        `json:"token"`
+	CreatedAt     time.Time     `json:"created_at"`
 }
 
 type User struct {

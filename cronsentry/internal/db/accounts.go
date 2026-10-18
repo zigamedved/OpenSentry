@@ -81,7 +81,13 @@ func (d *Database) CreateUser(email, name, password string) (*models.User, error
 		}
 		return nil, fmt.Errorf("create user: %w", err)
 	}
+	if err := d.EnsurePersonalWorkspace(user.ID); err != nil {
+		return nil, err
+	}
 	user.Password = ""
+	if err := d.AcceptPendingInvites(user); err != nil {
+		return nil, err
+	}
 	return user, nil
 }
 
@@ -190,6 +196,9 @@ func (d *Database) SeedDemoUser() (string, error) {
 		return "", err
 	}
 	if existing != nil {
+		if err := d.EnsurePersonalWorkspace(existing.ID); err != nil {
+			return "", err
+		}
 		return existing.ID, nil
 	}
 	hashed, err := hashPassword(demoPassword)
@@ -211,6 +220,9 @@ func (d *Database) SeedDemoUser() (string, error) {
 	}
 	if existing == nil {
 		return "", fmt.Errorf("seed demo user: test-user was not created")
+	}
+	if err := d.EnsurePersonalWorkspace(existing.ID); err != nil {
+		return "", err
 	}
 	return existing.ID, nil
 }
