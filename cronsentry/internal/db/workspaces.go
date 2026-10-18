@@ -144,25 +144,32 @@ func (d *Database) ActiveWorkspace(userID string) (*models.Workspace, error) {
 	return &list[0], nil
 }
 
-func (d *Database) SetActiveWorkspace(userID, workspaceID string) error {
-	res, err := d.db.Exec(`
-		UPDATE users SET active_workspace_id = $1
-		WHERE id = $2 AND EXISTS (
-			SELECT 1 FROM workspace_members m
-			WHERE m.user_id = $2 AND m.workspace_id = $1
+// SetActiveWorkspace selects a workspace the user already belongs to.
+// The UPDATE is skipped unless that membership exists. The returned row is
+// the workspace name and role for the response.
+func (d *Database) SetActiveWorkspace(userID, workspaceID string) (*models.Workspace, error) {
+	var ws models.Workspace
+	err := d.db.QueryRow(`
+		WITH switched AS (
+			UPDATE users SET active_workspace_id = $1
+			WHERE id = $2 AND EXISTS (
+				SELECT 1 FROM workspace_members m
+				WHERE m.user_id = $2 AND m.workspace_id = $1
+			)
+			RETURNING id
 		)
-	`, workspaceID, userID)
+		SELECT w.id, w.name, m.role, true
+		FROM switched
+		JOIN workspace_members m ON m.user_id = switched.id AND m.workspace_id = $1
+		JOIN workspaces w ON w.id = $1
+	`, workspaceID, userID).Scan(&ws.ID, &ws.Name, &ws.Role, &ws.Active)
+	if err == sql.ErrNoRows {
+		return nil, ErrNotMember
+	}
 	if err != nil {
-		return fmt.Errorf("set active workspace: %w", err)
+		return nil, fmt.Errorf("set active workspace: %w", err)
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return ErrNotMember
-	}
-	return nil
+	return &ws, nil
 }
 
 func (d *Database) memberRole(workspaceID, userID string) (string, error) {
@@ -341,7 +348,7 @@ func (d *Database) AcceptInvite(token string, user *models.User) (*models.Worksp
 			return nil, fmt.Errorf("accept invite: %w", err)
 		}
 	}
-	if err := d.SetActiveWorkspace(user.ID, invite.WorkspaceID); err != nil {
+	if _, err := d.SetActiveWorkspace(user.ID, invite.WorkspaceID); err != nil {
 		return nil, err
 	}
 	return &invite, nil

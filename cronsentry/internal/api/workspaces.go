@@ -45,8 +45,8 @@ func (s *Server) handleListWorkspaces(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSwitchWorkspace(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if err := s.db.SetActiveWorkspace(currentUserID(r), id); err != nil {
+	ws, err := s.db.SetActiveWorkspace(currentUserID(r), r.PathValue("id"))
+	if err != nil {
 		if s.writeWorkspaceError(w, err) {
 			return
 		}
@@ -54,20 +54,8 @@ func (s *Server) handleSwitchWorkspace(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to switch workspace", http.StatusInternalServerError)
 		return
 	}
-	list, err := s.db.ListWorkspaces(currentUserID(r))
-	if err != nil {
-		s.logger.Printf("list workspaces after switch: %v", err)
-		http.Error(w, "Failed to switch workspace", http.StatusInternalServerError)
-		return
-	}
-	for i := range list {
-		if list[i].ID == id {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(list[i])
-			return
-		}
-	}
-	http.Error(w, "Workspace not found", http.StatusNotFound)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(ws)
 }
 
 func (s *Server) handleListMembers(w http.ResponseWriter, r *http.Request) {
@@ -135,6 +123,7 @@ func (s *Server) handleListMyInvites(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
+	// The address is the session user. Query strings and bodies are ignored.
 	invites, err := s.db.ListPendingInvites(user.Email)
 	if err != nil {
 		s.logger.Printf("list my invites: %v", err)

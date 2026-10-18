@@ -927,6 +927,14 @@ func TestWorkspacesInviteAndExport(t *testing.T) {
 		t.Fatal("existing user saw the job before accepting")
 	}
 	outsider := registerSession(t, srv, "outsider@example.com", "Outsider")
+	peek := doAs(t, srv, outsider.token, http.MethodGet, "/api/invites?email="+invite.Email, `{"email":"`+invite.Email+`"}`)
+	if peek.StatusCode != http.StatusOK || strings.TrimSpace(peek.Body) != "[]" {
+		t.Fatalf("other user's invites = %d %q", peek.StatusCode, peek.Body)
+	}
+	own := doAs(t, srv, existing.token, http.MethodGet, "/api/invites?email=outsider@example.com", `{"email":"outsider@example.com"}`)
+	if own.StatusCode != http.StatusOK || !strings.Contains(own.Body, invite.Token) {
+		t.Fatalf("own invites = %d %s", own.StatusCode, own.Body)
+	}
 	mismatch := doAs(t, srv, outsider.token, http.MethodPost, "/api/workspaces/invites/"+invite.Token+"/accept", "")
 	if mismatch.StatusCode != http.StatusForbidden || strings.TrimSpace(mismatch.Body) != "This invite is for a different email" {
 		t.Fatalf("wrong email = %d %q", mismatch.StatusCode, mismatch.Body)
@@ -938,6 +946,45 @@ func TestWorkspacesInviteAndExport(t *testing.T) {
 	shared := decodeJobs(t, doAs(t, srv, existing.token, http.MethodGet, "/api/jobs", "").Body)
 	if len(shared) != 1 || shared[0].ID != job.ID {
 		t.Fatalf("accepted list = %+v", shared)
+	}
+	var memberships []models.Workspace
+	if err := json.Unmarshal([]byte(doAs(t, srv, existing.token, http.MethodGet, "/api/workspaces", "").Body), &memberships); err != nil {
+		t.Fatal(err)
+	}
+	personalID := ""
+	for _, membership := range memberships {
+		if membership.ID != wsID {
+			personalID = membership.ID
+		}
+	}
+	if personalID == "" {
+		t.Fatal("accepted user has no personal workspace")
+	}
+	switched := doAs(t, srv, existing.token, http.MethodPost, "/api/workspaces/"+personalID+"/switch", "")
+	if switched.StatusCode != http.StatusOK {
+		t.Fatalf("switch = %d %s", switched.StatusCode, switched.Body)
+	}
+	var active models.Workspace
+	if err := json.Unmarshal([]byte(switched.Body), &active); err != nil {
+		t.Fatal(err)
+	}
+	if active.ID != personalID || !active.Active || active.Role != models.RoleAdmin {
+		t.Fatalf("switched = %+v", active)
+	}
+	if strings.TrimSpace(doAs(t, srv, existing.token, http.MethodGet, "/api/jobs", "").Body) != "[]" {
+		t.Fatal("personal workspace still shows the shared job")
+	}
+	back := doAs(t, srv, existing.token, http.MethodPost, "/api/workspaces/"+wsID+"/switch", "")
+	if back.StatusCode != http.StatusOK {
+		t.Fatalf("switch back = %d %s", back.StatusCode, back.Body)
+	}
+	shared = decodeJobs(t, doAs(t, srv, existing.token, http.MethodGet, "/api/jobs", "").Body)
+	if len(shared) != 1 || shared[0].ID != job.ID {
+		t.Fatalf("list after switch back = %+v", shared)
+	}
+	denied := doAs(t, srv, outsider.token, http.MethodPost, "/api/workspaces/"+wsID+"/switch", "")
+	if denied.StatusCode != http.StatusNotFound || strings.TrimSpace(denied.Body) != "Workspace not found" {
+		t.Fatalf("outsider switch = %d %q", denied.StatusCode, denied.Body)
 	}
 	again := doAs(t, srv, existing.token, http.MethodPost, "/api/workspaces/invites/"+invite.Token+"/accept", "")
 	if again.StatusCode != http.StatusOK {
