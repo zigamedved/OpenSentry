@@ -28,6 +28,7 @@ type Server struct {
 	allowedOrigins map[string]struct{}
 	billing        billingConfig
 	dashboardURL   string
+	allowRegister  bool
 }
 
 func NewServer(database *db.Database, logger *log.Logger) *Server {
@@ -43,6 +44,16 @@ func NewServer(database *db.Database, logger *log.Logger) *Server {
 		allowedOrigins: allowedOriginsFromEnv(logger),
 		billing:        billingConfigFromEnv(logger),
 		dashboardURL:   strings.TrimSpace(os.Getenv("DASHBOARD_URL")),
+		allowRegister:  !envEnabled("DISABLE_REGISTER"),
+	}
+}
+
+func envEnabled(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
 	}
 }
 
