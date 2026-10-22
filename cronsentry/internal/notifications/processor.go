@@ -215,18 +215,20 @@ func (np *NotificationProcessor) markNotificationFailed(id, reason string) error
 }
 
 func (np *NotificationProcessor) markNotificationStatus(id, status, reason string) error {
+	// $1 is only the new status. Comparing that same placeholder to 'sent'
+	// makes Postgres reject the statement, so the dry-run row stays pending.
 	query := `
 		UPDATE notifications
 		SET status = $1,
-		    sent_at = CASE WHEN $1 = 'sent' THEN $2 ELSE sent_at END,
+		    sent_at = CASE WHEN $2 = 'sent' THEN $3 ELSE sent_at END,
 		    data = CASE
-		        WHEN $3 = '' THEN data
-		        ELSE jsonb_build_object('error', $3::text)
+		        WHEN $4 = '' THEN data
+		        ELSE jsonb_build_object('error', $4)
 		    END
-		WHERE id = $4
+		WHERE id = $5
 	`
 
-	_, err := np.db.Exec(query, status, time.Now().UTC(), reason, id)
+	_, err := np.db.Exec(query, status, status, time.Now().UTC(), reason, id)
 	if err != nil {
 		return fmt.Errorf("error updating notification: %w", err)
 	}
