@@ -14,6 +14,8 @@ services:
       - DB_SSLMODE=disable
       # Optional. When true, seed test@example.com / opensentry-demo and attach env webhooks to that user.
       - DEMO_SEED=${DEMO_SEED:-}
+      # Optional. When true, only invited emails can create an account.
+      - DISABLE_REGISTER=${DISABLE_REGISTER:-}
       # Optional. Unset keeps email in dry-run (logged, status skipped, not sent).
       - SENDGRID_API_KEY=${SENDGRID_API_KEY:-}
       - EMAIL_FROM=${EMAIL_FROM:-}

@@ -1136,27 +1136,7 @@ type recorded struct {
 
 func newBehaviorServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	t.Setenv("DB_NAME", "cronsentry_test")
-	ensureTestDatabase(t)
-
-	database, err := db.NewDatabase()
-	if err != nil {
-		t.Fatalf("connect test database: %v", err)
-	}
-	t.Cleanup(func() { database.Close() })
-	if err := database.InitDatabase(); err != nil {
-		t.Fatalf("init schema: %v", err)
-	}
-	if _, err := database.GetDB().Exec(`TRUNCATE TABLE users RESTART IDENTITY CASCADE`); err != nil {
-		t.Fatalf("truncate users: %v", err)
-	}
-	if _, err := database.GetDB().Exec(`TRUNCATE TABLE stripe_events`); err != nil {
-		t.Fatalf("truncate stripe events: %v", err)
-	}
-
-	srv := httptest.NewServer(NewServer(database, log.New(io.Discard, "", 0)).Router())
-	t.Cleanup(srv.Close)
-
+	srv, _ := newBareBehaviorServer(t)
 	registered := doAs(t, srv, "", http.MethodPost, "/api/register", `{
 		"email": "behavior@example.com",
 		"password": "behavior-pass",
@@ -1180,6 +1160,90 @@ func newBehaviorServer(t *testing.T) *httptest.Server {
 	behaviorToken = session.Token
 	behaviorUserID = session.User.ID
 	return srv
+}
+
+func newBareBehaviorServer(t *testing.T) (*httptest.Server, *db.Database) {
+	t.Helper()
+	t.Setenv("DB_NAME", "cronsentry_test")
+	ensureTestDatabase(t)
+
+	database, err := db.NewDatabase()
+	if err != nil {
+		t.Fatalf("connect test database: %v", err)
+	}
+	t.Cleanup(func() { database.Close() })
+	if err := database.InitDatabase(); err != nil {
+		t.Fatalf("init schema: %v", err)
+	}
+	if _, err := database.GetDB().Exec(`TRUNCATE TABLE users RESTART IDENTITY CASCADE`); err != nil {
+		t.Fatalf("truncate users: %v", err)
+	}
+	if _, err := database.GetDB().Exec(`TRUNCATE TABLE stripe_events`); err != nil {
+		t.Fatalf("truncate stripe events: %v", err)
+	}
+
+	srv := httptest.NewServer(NewServer(database, log.New(io.Discard, "", 0)).Router())
+	t.Cleanup(srv.Close)
+	return srv, database
+}
+
+func TestClosedRegistrationAllowsInvitedEmail(t *testing.T) {
+	t.Setenv("DISABLE_REGISTER", "true")
+	srv, database := newBareBehaviorServer(t)
+	if _, err := database.CreateUser("owner@example.com", "Owner", "behavior-pass"); err != nil {
+		t.Fatal(err)
+	}
+	owner := doAs(t, srv, "", http.MethodPost, "/api/login", `{"email":"owner@example.com","password":"behavior-pass"}`)
+	if owner.StatusCode != http.StatusOK {
+		t.Fatalf("login = %d %s", owner.StatusCode, owner.Body)
+	}
+	var session struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal([]byte(owner.Body), &session); err != nil || session.Token == "" {
+		t.Fatalf("owner session = %s %v", owner.Body, err)
+	}
+
+	closed := doAs(t, srv, "", http.MethodPost, "/api/register", `{"email":"stranger@example.com","password":"behavior-pass","name":"Stranger"}`)
+	if closed.StatusCode != http.StatusForbidden || strings.TrimSpace(closed.Body) != "Registration is closed" {
+		t.Fatalf("stranger = %d %q", closed.StatusCode, closed.Body)
+	}
+	existing := doAs(t, srv, "", http.MethodPost, "/api/register", `{"email":"owner@example.com","password":"behavior-pass","name":"Owner"}`)
+	if existing.StatusCode != http.StatusForbidden || strings.TrimSpace(existing.Body) != "Registration is closed" {
+		t.Fatalf("existing email = %d %q", existing.StatusCode, existing.Body)
+	}
+	short := doAs(t, srv, "", http.MethodPost, "/api/register", `{"email":"short@example.com","password":"short","name":"Short"}`)
+	if short.StatusCode != http.StatusBadRequest || strings.TrimSpace(short.Body) != "Password must be at least 8 characters" {
+		t.Fatalf("short password = %d %q", short.StatusCode, short.Body)
+	}
+
+	created := doAs(t, srv, session.Token, http.MethodPost, "/api/jobs", `{"name":"Private backup","schedule":"0 0 * * *","grace_time":5}`)
+	if created.StatusCode != http.StatusCreated {
+		t.Fatalf("create = %d %s", created.StatusCode, created.Body)
+	}
+	job := decodeJob(t, created.Body)
+	var workspaces []models.Workspace
+	if err := json.Unmarshal([]byte(doAs(t, srv, session.Token, http.MethodGet, "/api/workspaces", "").Body), &workspaces); err != nil || len(workspaces) != 1 {
+		t.Fatalf("workspaces = %+v %v", workspaces, err)
+	}
+	invited := doAs(t, srv, session.Token, http.MethodPost, "/api/workspaces/"+workspaces[0].ID+"/invites", `{"email":"guest@example.com"}`)
+	if invited.StatusCode != http.StatusCreated {
+		t.Fatalf("invite = %d %s", invited.StatusCode, invited.Body)
+	}
+	guest := doAs(t, srv, "", http.MethodPost, "/api/register", `{"email":"guest@example.com","password":"behavior-pass","name":"Guest"}`)
+	if guest.StatusCode != http.StatusCreated {
+		t.Fatalf("invited register = %d %s", guest.StatusCode, guest.Body)
+	}
+	var guestSession struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal([]byte(guest.Body), &guestSession); err != nil || guestSession.Token == "" {
+		t.Fatal(err)
+	}
+	jobs := decodeJobs(t, doAs(t, srv, guestSession.Token, http.MethodGet, "/api/jobs", "").Body)
+	if len(jobs) != 1 || jobs[0].ID != job.ID {
+		t.Fatalf("guest jobs = %+v", jobs)
+	}
 }
 
 func ensureTestDatabase(t *testing.T) {

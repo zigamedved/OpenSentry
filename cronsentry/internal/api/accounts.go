@@ -46,6 +46,19 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.allowRegister {
+		invites, err := s.db.ListPendingInvites(email)
+		if err != nil {
+			s.logger.Printf("register invites: %v", err)
+			http.Error(w, "Failed to register", http.StatusInternalServerError)
+			return
+		}
+		if len(invites) == 0 {
+			http.Error(w, "Registration is closed", http.StatusForbidden)
+			return
+		}
+	}
+
 	user, err := s.db.CreateUser(email, name, body.Password)
 	if errors.Is(err, db.ErrEmailTaken) {
 		http.Error(w, "Email already registered", http.StatusConflict)
