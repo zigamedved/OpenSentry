@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/zigamedved/OpenSentry/internal/db"
+	"github.com/zigamedved/OpenSentry/internal/models"
 )
 
 func (s *Server) writeWorkspaceError(w http.ResponseWriter, err error) bool {
@@ -115,6 +116,28 @@ func (s *Server) handleListWorkspaceInvites(w http.ResponseWriter, r *http.Reque
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(invites)
+}
+
+func (s *Server) handlePreviewInvite(w http.ResponseWriter, r *http.Request) {
+	invite, err := s.db.PendingInviteByToken(r.PathValue("token"))
+	if err != nil {
+		if s.writeWorkspaceError(w, err) {
+			return
+		}
+		s.logger.Printf("preview invite: %v", err)
+		http.Error(w, "Failed to load invite", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(struct {
+		Email         string               `json:"email"`
+		WorkspaceName string               `json:"workspace_name"`
+		Role          models.WorkspaceRole `json:"role"`
+	}{
+		Email:         invite.Email,
+		WorkspaceName: invite.WorkspaceName,
+		Role:          invite.Role,
+	})
 }
 
 func (s *Server) handleListMyInvites(w http.ResponseWriter, r *http.Request) {

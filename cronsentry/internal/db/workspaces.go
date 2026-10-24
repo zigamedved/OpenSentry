@@ -268,6 +268,25 @@ func (d *Database) CreateInvite(workspaceID, actorID, email, role string) (*mode
 	return invite, nil
 }
 
+// PendingInviteByToken loads an invite that has not been accepted.
+// A missing token and an already accepted one are both ErrInviteNotFound.
+func (d *Database) PendingInviteByToken(token string) (*models.WorkspaceInvite, error) {
+	var invite models.WorkspaceInvite
+	err := d.db.QueryRow(`
+		SELECT i.id, i.workspace_id, w.name, i.email, i.role, i.token, i.created_at
+		FROM workspace_invites i
+		JOIN workspaces w ON w.id = i.workspace_id
+		WHERE i.token = $1 AND i.accepted_at IS NULL
+	`, token).Scan(&invite.ID, &invite.WorkspaceID, &invite.WorkspaceName, &invite.Email, &invite.Role, &invite.Token, &invite.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, ErrInviteNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load invite: %w", err)
+	}
+	return &invite, nil
+}
+
 func (d *Database) ListPendingInvites(email string) ([]models.WorkspaceInvite, error) {
 	rows, err := d.db.Query(`
 		SELECT i.id, i.workspace_id, w.name, i.email, i.role, i.token, i.created_at
