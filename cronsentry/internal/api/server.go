@@ -89,19 +89,25 @@ func (s *Server) Router() http.Handler {
 	mux.HandleFunc("GET /api/workspaces/{id}/invites", s.handleListWorkspaceInvites)
 	mux.HandleFunc("GET /api/workspaces/{id}/export", s.handleExportWorkspace)
 	mux.HandleFunc("GET /api/invites", s.handleListMyInvites)
+	mux.HandleFunc("GET /api/invites/{token}", s.handlePreviewInvite)
 	mux.HandleFunc("POST /api/workspaces/invites/{token}/accept", s.handleAcceptInvite)
 	return s.corsMiddleware(s.loggingMiddleware(s.recoveryMiddleware(s.rateLimitMiddleware(s.authMiddleware(mux)))))
 }
 
 // publicPath is reachable without a session. Ping URLs, health, account
 // creation, and logout stay public. Logout must run even when the session is
-// already expired so the HttpOnly cookie can be cleared. Everything else
-// under /api/ needs a session.
+// already expired so the HttpOnly cookie can be cleared. An invite link is
+// public the same way as a ping URL: GET /api/invites/{token} reveals only
+// the invited email, workspace name, and role. GET /api/invites stays on the
+// session. Everything else under /api/ needs a session.
 func publicPath(method, path string) bool {
 	if method == http.MethodOptions {
 		return true
 	}
 	if path == "/healthz" || strings.HasPrefix(path, "/api/ping/") {
+		return true
+	}
+	if method == http.MethodGet && strings.HasPrefix(path, "/api/invites/") {
 		return true
 	}
 	if method == http.MethodPost && (path == "/api/register" || path == "/api/login" || path == "/api/logout" || path == "/api/stripe/webhook") {
