@@ -33,6 +33,14 @@ async function readError(response: Response, fallback: string) {
   return text || fallback;
 }
 
+function inviteURL(token: string) {
+  const url = new URL(window.location.href);
+  url.search = '';
+  url.hash = '';
+  url.searchParams.set('invite', token);
+  return url.toString();
+}
+
 export function WorkspacePanel({
   apiUrl,
   onChanged,
@@ -54,6 +62,7 @@ export function WorkspacePanel({
   const [exportTo, setExportTo] = useState(() => localInputValue(new Date(Date.now() + 60 * 60 * 1000)));
   const [exportText, setExportText] = useState('');
   const [busy, setBusy] = useState(false);
+  const [copiedToken, setCopiedToken] = useState<string | null>(null);
 
   const active = workspaces.find((workspace) => workspace.active) ?? workspaces[0];
 
@@ -130,7 +139,7 @@ export function WorkspacePanel({
         setError(await readError(response, 'Could not invite'));
         return;
       }
-      setNotice(`${email} can join from the sign-in page. A new account joins this workspace automatically.`);
+      setNotice(`${email} can open the invite link below. It joins this workspace as that email.`);
       setEmail('');
       await load();
     } finally {
@@ -330,9 +339,47 @@ export function WorkspacePanel({
             </form>
           ) : null}
           {invites.length > 0 ? (
-            <p className="mt-2 text-sm text-gray-500">
-              Waiting: {invites.map((invite) => invite.email).join(', ')}
-            </p>
+            <ul className="mt-3 space-y-2">
+              {invites.map((invite) => {
+                const link = inviteURL(invite.token);
+                const newest = invite.id === invites[invites.length - 1].id;
+                return (
+                  <li key={invite.id} className="text-sm text-gray-600">
+                    <p>Waiting: {invite.email}</p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <input
+                        id={newest ? 'invite-link' : undefined}
+                        readOnly
+                        value={link}
+                        aria-label={`Invite link for ${invite.email}`}
+                        className="block w-full min-w-0 flex-1 rounded-md border border-gray-300 bg-gray-50 px-2 py-1 font-mono text-xs text-gray-800"
+                      />
+                      <button
+                        id={newest ? 'invite-copy' : undefined}
+                        type="button"
+                        className="shrink-0 rounded-md bg-gray-100 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-200"
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(link);
+                          } catch {
+                            const area = document.createElement('textarea');
+                            area.value = link;
+                            document.body.appendChild(area);
+                            area.select();
+                            document.execCommand('copy');
+                            area.remove();
+                          }
+                          setCopiedToken(invite.token);
+                          window.setTimeout(() => setCopiedToken((current) => (current === invite.token ? null : current)), 1500);
+                        }}
+                      >
+                        {copiedToken === invite.token ? 'Copied' : 'Copy'}
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
           ) : null}
         </div>
 

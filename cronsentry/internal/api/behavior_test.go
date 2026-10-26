@@ -926,6 +926,32 @@ func TestWorkspacesInviteAndExport(t *testing.T) {
 	if strings.TrimSpace(doAs(t, srv, existing.token, http.MethodGet, "/api/jobs", "").Body) != "[]" {
 		t.Fatal("existing user saw the job before accepting")
 	}
+	preview := doAs(t, srv, "", http.MethodGet, "/api/invites/"+invite.Token, "")
+	if preview.StatusCode != http.StatusOK {
+		t.Fatalf("preview = %d %s", preview.StatusCode, preview.Body)
+	}
+	var previewBody map[string]any
+	if err := json.Unmarshal([]byte(preview.Body), &previewBody); err != nil {
+		t.Fatal(err)
+	}
+	name, _ := previewBody["workspace_name"].(string)
+	if previewBody["email"] != "existing@example.com" || previewBody["role"] != "member" || name == "" {
+		t.Fatalf("preview = %+v", previewBody)
+	}
+	if _, ok := previewBody["token"]; ok {
+		t.Fatalf("preview included the token: %+v", previewBody)
+	}
+	if _, ok := previewBody["workspace_id"]; ok || previewBody["id"] != nil {
+		t.Fatalf("preview included ids: %+v", previewBody)
+	}
+	unknown := doAs(t, srv, "", http.MethodGet, "/api/invites/not-a-token", "")
+	if unknown.StatusCode != http.StatusNotFound || strings.TrimSpace(unknown.Body) != "Invite not found" {
+		t.Fatalf("unknown invite = %d %q", unknown.StatusCode, unknown.Body)
+	}
+	anonList := doAs(t, srv, "", http.MethodGet, "/api/invites", "")
+	if anonList.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("anonymous invite list = %d %s", anonList.StatusCode, anonList.Body)
+	}
 	outsider := registerSession(t, srv, "outsider@example.com", "Outsider")
 	peek := doAs(t, srv, outsider.token, http.MethodGet, "/api/invites?email="+invite.Email, `{"email":"`+invite.Email+`"}`)
 	if peek.StatusCode != http.StatusOK || strings.TrimSpace(peek.Body) != "[]" {
@@ -942,6 +968,10 @@ func TestWorkspacesInviteAndExport(t *testing.T) {
 	accepted := doAs(t, srv, existing.token, http.MethodPost, "/api/workspaces/invites/"+invite.Token+"/accept", "")
 	if accepted.StatusCode != http.StatusOK {
 		t.Fatalf("accept = %d %s", accepted.StatusCode, accepted.Body)
+	}
+	used := doAs(t, srv, "", http.MethodGet, "/api/invites/"+invite.Token, "")
+	if used.StatusCode != http.StatusNotFound || strings.TrimSpace(used.Body) != "Invite not found" {
+		t.Fatalf("accepted preview = %d %q", used.StatusCode, used.Body)
 	}
 	shared := decodeJobs(t, doAs(t, srv, existing.token, http.MethodGet, "/api/jobs", "").Body)
 	if len(shared) != 1 || shared[0].ID != job.ID {

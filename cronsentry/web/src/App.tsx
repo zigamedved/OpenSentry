@@ -38,6 +38,24 @@ async function forgetCookie() {
   }
 }
 
+function inviteTokenFromLocation() {
+  return new URLSearchParams(window.location.search).get('invite') ?? '';
+}
+
+function clearInviteQuery() {
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has('invite')) return;
+  url.searchParams.delete('invite');
+  const next = url.pathname + (url.search ? url.search : '') + url.hash;
+  window.history.replaceState({}, '', next);
+}
+
+interface InvitePreview {
+  email: string;
+  workspace_name: string;
+  role: string;
+}
+
 function App() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -52,6 +70,19 @@ function App() {
   const [name, setName] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [inviteToken, setInviteToken] = useState(inviteTokenFromLocation);
+  const [inviteLabel, setInviteLabel] = useState<string | null>(null);
+  const [lockedEmail, setLockedEmail] = useState('');
+  const [inviteError, setInviteError] = useState<string | null>(null);
+
+  const acceptInviteToken = useCallback(async (token: string) => {
+    const response = await fetch(`${API_URL}/api/workspaces/invites/${encodeURIComponent(token)}/accept`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+    if (response.ok) return null;
+    return readError(response, 'Could not accept invite');
+  }, []);
 
   const fetchJobs = useCallback(async () => {
     try {
@@ -94,6 +125,13 @@ function App() {
         const me = (await response.json()) as Account;
         if (cancelled) return;
         setAccount(me);
+        const pendingInvite = inviteTokenFromLocation();
+        if (pendingInvite) {
+          const message = await acceptInviteToken(pendingInvite);
+          if (!cancelled && message) setInviteError(message);
+          clearInviteQuery();
+          if (!cancelled) setInviteToken('');
+        }
         await fetchJobs();
       } catch {
         if (!cancelled) {
@@ -106,7 +144,37 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [fetchJobs]);
+  }, [acceptInviteToken, fetchJobs]);
+
+  useEffect(() => {
+    if (!inviteToken || account) return;
+    let cancelled = false;
+    async function loadInvite() {
+      try {
+        const response = await fetch(`${API_URL}/api/invites/${encodeURIComponent(inviteToken)}`);
+        if (cancelled) return;
+        if (!response.ok) {
+          setInviteLabel(null);
+          setLockedEmail('');
+          setFormError(await readError(response, 'Invite not found'));
+          return;
+        }
+        const preview = (await response.json()) as InvitePreview;
+        if (cancelled) return;
+        setEmail(preview.email);
+        setLockedEmail(preview.email);
+        setMode('register');
+        setFormError(null);
+        setInviteLabel(`Join ${preview.workspace_name} as ${preview.role}. This link is only for ${preview.email}.`);
+      } catch {
+        if (!cancelled) setFormError('Invite not found');
+      }
+    }
+    void loadInvite();
+    return () => {
+      cancelled = true;
+    };
+  }, [account, inviteToken]);
 
   const onAuthError = useCallback(() => {
     void forgetCookie();
@@ -122,9 +190,10 @@ function App() {
     setSubmitting(true);
     try {
       const path = mode === 'register' ? '/api/register' : '/api/login';
+      const address = lockedEmail || email;
       const payload = mode === 'register'
-        ? { email, password, name }
-        : { email, password };
+        ? { email: address, password, name }
+        : { email: address, password };
       const response = await fetch(`${API_URL}${path}`, {
         method: 'POST',
         credentials: 'include',
@@ -136,6 +205,14 @@ function App() {
         return;
       }
       const data = await response.json();
+      if (inviteToken) {
+        const message = await acceptInviteToken(inviteToken);
+        if (message) setInviteError(message);
+        clearInviteQuery();
+        setInviteToken('');
+        setInviteLabel(null);
+        setLockedEmail('');
+      }
       setAccount(data.user);
       setPassword('');
       setIsLoading(true);
@@ -259,8 +336,10 @@ function App() {
                 {mode === 'register' ? 'Create an account' : 'Sign in'}
               </h2>
               <p className="mt-1 text-sm text-gray-500">
-                Jobs belong to a workspace. Invite teammates by email. Ping URLs stay public.
+                Jobs belong to a workspace. Invite teammates with a link. Ping URLs stay public.
               </p>
+              {inviteToken && !inviteLabel && !formError ? <p className="mt-3 text-sm text-gray-500">Checking invite…</p> : null}
+              {inviteLabel ? <p id="invite-preview" className="mt-3 text-sm text-gray-800">{inviteLabel}</p> : null}
               {formError ? <p className="mt-3 text-sm text-red-600">{formError}</p> : null}
               {mode === 'register' ? (
                 <div className="mt-4">
@@ -277,15 +356,16 @@ function App() {
               ) : null}
               <div className="mt-4">
                 <label htmlFor="email" className="block text-sm font-medium text-gray-700">Email</label>
-                <input
-                  id="email"
-                  type="email"
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  required
-                  autoComplete="email"
-                  className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm"
-                />
+                  <input
+                    id="email"
+                    type="email"
+                    value={lockedEmail || email}
+                    onChange={(event) => setEmail(event.target.value)}
+                    required
+                    readOnly={Boolean(lockedEmail)}
+                    autoComplete="email"
+                    className={`mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm ${lockedEmail ? 'bg-gray-50 text-gray-600' : ''}`}
+                  />
               </div>
               <div className="mt-4">
                 <label htmlFor="password" className="block text-sm font-medium text-gray-700">Password</label>
@@ -317,6 +397,22 @@ function App() {
               >
                 {mode === 'register' ? 'Already have an account? Sign in' : 'Need an account? Create one'}
               </button>
+              {lockedEmail ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearInviteQuery();
+                    setInviteToken('');
+                    setInviteLabel(null);
+                    setLockedEmail('');
+                    setEmail('');
+                    setFormError(null);
+                  }}
+                  className="mt-2 w-full text-sm font-medium text-gray-500 hover:text-gray-800"
+                >
+                  Use a different account
+                </button>
+              ) : null}
             </form>
           ) : selectedId ? (
             <JobDetail
@@ -333,6 +429,7 @@ function App() {
           ) : (
             <>
               <p className="mb-4 text-sm text-gray-600 sm:hidden">{account.email}</p>
+              {inviteError ? <p className="mb-4 text-sm text-red-600">{inviteError}</p> : null}
               <WorkspacePanel apiUrl={API_URL} onChanged={() => { void fetchJobs(); }} onAuthError={onAuthError} />
               <BillingBanner apiUrl={API_URL} jobCount={jobs.length} />
               <AlertChannels apiUrl={API_URL} />
